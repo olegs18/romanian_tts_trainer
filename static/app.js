@@ -111,12 +111,29 @@ async function getAudio(phrase) {
   });
 }
 
+function scrollCardIntoView(card) {
+  const rect = card.getBoundingClientRect();
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const margin = 24;
+  const fullyVisible = rect.top >= margin && rect.bottom <= viewportHeight - margin;
+
+  if (!fullyVisible) {
+    const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+  }
+}
+
 async function playPhrase(index, token) {
   const phrase = state.phrases[index];
   const card = $$('.card')[index];
   if (!phrase || !card || token !== state.stopToken) return;
-  $$('.card').forEach(c => c.classList.remove('active'));
+  $('.card').forEach(c => c.classList.remove('active'));
   card.classList.add('active');
+  scrollCardIntoView(card);
   $('#playbackStatus').textContent = `${index + 1}/${state.phrases.length}: ${phrase.ro}`;
   setCardStatus(card, 'готовлю аудио…');
   const audioData = await getAudio(phrase);
