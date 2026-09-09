@@ -191,3 +191,21 @@ input[type="url"] {
   .dialog-head .row, .dialog-subhead { align-items: stretch; flex-direction: column; }
   .url-import-row { grid-template-columns: 1fr; }
 }
+
+
+.search-provider-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.search-provider-controls select {
+  min-width: 170px;
+}
+@media (max-width: 620px) {
+  .search-provider-controls {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+}
