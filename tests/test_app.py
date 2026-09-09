@@ -1,3 +1,4 @@
+import base64
 import json
 import tempfile
 import unittest
@@ -37,12 +38,12 @@ class HelpersTest(unittest.TestCase):
             self.assertNotEqual(a, b)
             self.assertEqual(a.suffix, ".mp3")
 
-    def test_image_key_changes_with_query(self):
+    def test_active_image_is_bound_to_phrase_not_query(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = app.WebImageService(Path(tmp))
-            a = service.key("Ce înseamnă?", "Что означает?", "dictionary question")
-            b = service.key("Ce înseamnă?", "Что означает?", "confused person")
-            self.assertNotEqual(a, b)
+            a = service.manifest_path("Ce înseamnă?", "Что означает?", "dictionary question")
+            b = service.manifest_path("Ce înseamnă?", "Что означает?", "confused person")
+            self.assertEqual(a, b)
 
     def test_openverse_candidate_normalization(self):
         candidate = app.WebImageService._candidate({
@@ -59,24 +60,6 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(candidate["license"], "by")
         self.assertEqual(candidate["thumbnail"], "https://example.org/thumb.jpg")
 
-    def test_lookup_reads_cached_selection_and_attribution(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = app.WebImageService(Path(tmp))
-            text, translation, query = "Bună ziua.", "Добрый день.", "people greeting"
-            key = service.key(text, translation, query)
-            image = Path(tmp) / f"{key}.jpg"
-            image.write_bytes(b"fake-jpg")
-            manifest = service.manifest_path(text, translation, query)
-            manifest.write_text(json.dumps({
-                "filename": image.name,
-                "creator": "Jane",
-                "license": "by",
-                "source_url": "https://example.org/page",
-            }), encoding="utf-8")
-            selected = service.lookup(text, translation, query)
-            self.assertEqual(selected["creator"], "Jane")
-            self.assertEqual(selected["url"], f"/cache/images/{image.name}")
-
     def test_search_uses_openverse_results(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = app.WebImageService(Path(tmp))
@@ -90,6 +73,58 @@ class HelpersTest(unittest.TestCase):
                 results = service.search("confused person", 12)
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["id"], "1")
+
+    def test_clipboard_data_url_is_stored_and_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            png = b"\x89PNG\r\n\x1a\n" + b"test-image"
+            data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+            selected = service.import_data_url("Nu am înțeles.", data_url, "clipboard")
+            self.assertEqual(selected["source_type"], "clipboard")
+            self.assertTrue(selected["url"].endswith(".png"))
+
+            found = service.lookup("Nu am înțeles.", "Я не понял.", "another query")
+            self.assertEqual(found["source_type"], "clipboard")
+            self.assertEqual(found["url"], selected["url"])
+
+    def test_file_import_preserves_original_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            jpeg = b"\xff\xd8\xff" + b"fake-jpeg"
+            data_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+            selected = service.import_data_url("Bună ziua.", data_url, "file", "hello.jpg")
+            self.assertEqual(selected["source_type"], "file")
+            self.assertEqual(selected["original_filename"], "hello.jpg")
+
+    def test_url_import_uses_downloaded_final_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            png = b"\x89PNG\r\n\x1a\n" + b"url-image"
+            with patch.object(
+                service,
+                "_download_image",
+                return_value=(png, ".png", "https://cdn.example.org/final.png"),
+            ):
+                selected = service.import_url("Mă numesc Oleh.", "https://example.org/image.png")
+            self.assertEqual(selected["source_type"], "url")
+            self.assertEqual(selected["source_url"], "https://cdn.example.org/final.png")
+
+    def test_invalid_declared_image_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            bad = "data:image/png;base64," + base64.b64encode(b"<html>not png</html>").decode("ascii")
+            with self.assertRaises(RuntimeError):
+                service.import_data_url("Bună ziua.", bad, "clipboard")
+
+    def test_delete_removes_active_image(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            gif = b"GIF89a" + b"fake-gif"
+            data_url = "data:image/gif;base64," + base64.b64encode(gif).decode("ascii")
+            service.import_data_url("Puteți repeta, vă rog?", data_url, "clipboard")
+            self.assertIsNotNone(service.lookup("Puteți repeta, vă rog?", "", "q"))
+            self.assertTrue(service.delete("Puteți repeta, vă rog?", "", "q"))
+            self.assertIsNone(service.lookup("Puteți repeta, vă rog?", "", "q"))
 
 
 if __name__ == "__main__":
