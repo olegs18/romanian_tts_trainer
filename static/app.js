@@ -233,7 +233,7 @@ async function lookupImage(index) {
   try {
     const data = await api('/api/image/lookup', {
       method: 'POST',
-      body: JSON.stringify({ ...imagePayload(phrase), provider: provider }),
+      body: JSON.stringify(imagePayload(phrase)),
     });
     if (data.found && data.image) {
       if (!phrase.query && data.query) phrase.query = data.query;
@@ -296,7 +296,7 @@ async function searchImage(index) {
   try {
     const data = await api('/api/image/search', {
       method: 'POST',
-      body: JSON.stringify(imagePayload(phrase)),
+      body: JSON.stringify({ ...imagePayload(phrase), provider: provider }),
     });
     phrase.query = data.query;
     $('.image-query', card).value = data.query;
