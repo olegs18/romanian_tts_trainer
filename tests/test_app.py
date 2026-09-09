@@ -127,6 +127,20 @@ class HelpersTest(unittest.TestCase):
             self.assertTrue(service.delete("Puteți repeta, vă rog?", "", "q"))
             self.assertIsNone(service.lookup("Puteți repeta, vă rog?", "", "q"))
 
+    def test_replacing_image_changes_cache_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            first = b"\x89PNG\r\n\x1a\n" + b"first-image"
+            second = b"\x89PNG\r\n\x1a\n" + b"second-image"
+            first_url = "data:image/png;base64," + base64.b64encode(first).decode("ascii")
+            second_url = "data:image/png;base64," + base64.b64encode(second).decode("ascii")
+
+            old = service.import_data_url("Bună ziua.", first_url, "clipboard")
+            new = service.import_data_url("Bună ziua.", second_url, "clipboard")
+
+            self.assertEqual(old["url"], new["url"])
+            self.assertNotEqual(old["version"], new["version"])
+
 
     def test_google_candidate_normalization(self):
         candidate = app.WebImageService._google_candidate({

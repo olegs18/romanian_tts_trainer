@@ -59,7 +59,7 @@ OPENVERSE_ENDPOINT = "https://api.openverse.org/v1/images/"
 GOOGLE_CSE_ENDPOINT = "https://customsearch.googleapis.com/customsearch/v1"
 GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "").strip()
 GOOGLE_CSE_ID = os.environ.get("GOOGLE_CSE_ID", "").strip()
-USER_AGENT = "RomanianTTSTrainer/1.3 (local language-learning app)"
+USER_AGENT = "RomanianTTSTrainer/2.0 (local language-learning app)"
 
 DEFAULT_PHRASES = [
     ["Bună ziua.", "Добрый день.", "people greeting hello daytime"],
@@ -499,6 +499,7 @@ class WebImageService:
 
             stored = {
                 "filename": target.name,
+                "version": hashlib.sha256(image_bytes).hexdigest()[:16],
                 "source_type": clean_text(metadata.get("source_type"), 50) or "unknown",
                 "title": clean_text(metadata.get("title"), 500),
                 "creator": clean_text(metadata.get("creator"), 500),
@@ -603,6 +604,7 @@ class WebImageService:
             return None
         result = dict(metadata)
         result.setdefault("source_type", "openverse")
+        result.setdefault("version", str(target.stat().st_mtime_ns))
         result["url"] = f"/cache/images/{filename}"
         return result
 
@@ -671,7 +673,7 @@ def get_search_candidate(token: str, candidate_id: str) -> dict[str, Any] | None
 
 
 class TrainerHandler(BaseHTTPRequestHandler):
-    server_version = "RomanianTTSTrainer/1.3"
+    server_version = "RomanianTTSTrainer/2.0"
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
