@@ -58,8 +58,10 @@ input[type="range"] { width: 100%; accent-color: var(--green); }
 .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 20px; }
 .card { display: grid; grid-template-columns: minmax(180px, 42%) 1fr; min-height: 285px; overflow: hidden; border: 1px solid var(--line); border-radius: 22px; background: var(--paper); box-shadow: var(--shadow); transition: transform .2s ease, box-shadow .2s ease; }
 .card.active { transform: translateY(-3px); box-shadow: 0 22px 60px rgba(31,91,67,.18); outline: 2px solid rgba(31,91,67,.35); }
-.image-wrap { position: relative; min-height: 260px; background: #e7e1d3; }
-.mnemonic-image, .image-placeholder { width: 100%; height: 100%; min-height: 285px; object-fit: cover; }
+.image-wrap { position: relative; min-height: 285px; overflow: hidden; background: #e7e1d3; }
+.mnemonic-image, .image-placeholder { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; object-fit: cover; }
+.mnemonic-image { display: block; }
+.mnemonic-image[hidden], .image-placeholder[hidden] { display: none !important; }
 .image-placeholder { display: grid; place-items: center; background: linear-gradient(145deg, #e7e1d3, #d9d3c7); color: #777268; }
 .image-placeholder span { border: 1px solid rgba(0,0,0,.15); border-radius: 999px; padding: 5px 9px; font-size: 12px; }
 .image-actions { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; gap: 7px; }
@@ -98,7 +100,8 @@ code { padding: 2px 5px; border-radius: 5px; background: #eee9df; }
   .hero, .panel-title-row, .actions-row, .playback-row { align-items: stretch; flex-direction: column; }
   .settings-grid { grid-template-columns: 1fr; }
   .card { grid-template-columns: 1fr; }
-  .image-wrap, .mnemonic-image, .image-placeholder { min-height: 300px; }
+  .image-wrap { min-height: 300px; }
+  .mnemonic-image, .image-placeholder { min-height: 0; }
   .badge { align-self: flex-start; }
   .candidate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-head { flex-direction: column; }
