@@ -103,3 +103,88 @@ code { padding: 2px 5px; border-radius: 5px; background: #eee9df; }
   .candidate-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dialog-head { flex-direction: column; }
 }
+
+
+/* Image source manager */
+.image-source-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 22px;
+}
+.source-box {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+}
+.source-box h3, .search-section h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.source-box p { margin-top: 8px; }
+.paste-zone {
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  min-height: 118px;
+  padding: 14px;
+  border: 2px dashed #b8b1a3;
+  border-radius: 12px;
+  background: #faf7f0;
+  color: var(--muted);
+  text-align: center;
+  cursor: copy;
+  transition: border-color .2s ease, background .2s ease, transform .15s ease;
+}
+.paste-zone strong { color: var(--green); font-size: 20px; }
+.paste-zone.dragging, .paste-zone:focus {
+  border-color: var(--green);
+  background: #f0f6f2;
+  outline: none;
+  transform: translateY(-1px);
+}
+.url-import-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+input[type="url"] {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+}
+.search-section {
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.dialog-subhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.empty-state {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+.image-actions .manage-image { flex: 1; }
+@media (max-width: 900px) {
+  .image-source-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .image-dialog { padding: 14px; }
+  .dialog-head .row, .dialog-subhead { align-items: stretch; flex-direction: column; }
+  .url-import-row { grid-template-columns: 1fr; }
+}
