@@ -19,6 +19,7 @@ const elements = {
   imageStatus: $('#imageStatus'),
   imageProgress: $('#imageProgress'),
   imageOptions: $('#imageOptions'),
+  manageImageQuick: $('#manageImageQuick'),
   voice: $('#voice'),
   rate: $('#rate'),
   pitch: $('#pitch'),
@@ -330,6 +331,8 @@ function renderCurrent(repeatNumber = null) {
     elements.image.removeAttribute('src');
     elements.imagePlaceholder.hidden = false;
     elements.imagePlaceholder.textContent = 'Добавьте фразы для тренировки.';
+    elements.manageImageQuick.textContent = 'Прикрепить изображение';
+    elements.manageImageQuick.disabled = true;
     elements.recallHint.hidden = true;
     elements.reveal.hidden = true;
     elements.credit.hidden = true;
@@ -359,9 +362,11 @@ function renderCurrent(repeatNumber = null) {
     elements.image.hidden = true;
     elements.image.removeAttribute('src');
     elements.imagePlaceholder.hidden = false;
-    elements.imagePlaceholder.textContent = 'У этой фразы пока нет изображения.';
+    elements.imagePlaceholder.textContent = 'У этой фразы пока нет изображения. Прикрепите запоминающуюся ассоциацию.';
   }
   renderCredit(stored, recallHidden);
+  elements.manageImageQuick.textContent = stored ? 'Заменить изображение' : 'Прикрепить изображение';
+  elements.manageImageQuick.disabled = false;
   $('#manageImage').disabled = false;
   $('#saveImageQuery').disabled = false;
   $('#deleteCurrentImage').disabled = !stored;
@@ -890,6 +895,7 @@ $('#saveImageQuery').addEventListener('click', () => {
   setImageStatus('Поисковый запрос сохранён.');
 });
 $('#manageImage').addEventListener('click', openImageManager);
+elements.manageImageQuick.addEventListener('click', openImageManager);
 $('#deleteCurrentImage').addEventListener('click', () => deleteImage());
 $('#autoFindMissing').addEventListener('click', autoFindMissing);
 $('#closeDialog').addEventListener('click', () => elements.dialog.close());

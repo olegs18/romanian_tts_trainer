@@ -99,7 +99,16 @@ test("interface has one large study card and a compact playlist", async () => {
     assert.match(app.q("#currentImage").getAttribute("src"), /version-one$/);
     assert.equal(app.q("#currentImage").hidden, false);
     assert.equal(app.q("#imagePlaceholder").hidden, true);
+    assert.equal(app.q("#manageImageQuick").textContent.trim(), "Заменить изображение");
+    assert.equal(app.q("#manageImageQuick").disabled, false);
   } finally { app.dom.window.close(); }
+});
+
+test("image action appears on picture hover, keyboard focus and touch screens", () => {
+  const css = fs.readFileSync(path.join(root, "static/style.css"), "utf8");
+  assert.match(css, /\.picture-frame \.image-quick-action \{[^}]*opacity: 0;[^}]*pointer-events: none;/s);
+  assert.match(css, /\.picture-frame:hover \.image-quick-action,[\s\S]*\.picture-frame:focus-within \.image-quick-action \{[^}]*opacity: 1;/);
+  assert.match(css, /@media \(hover: none\), \(pointer: coarse\) \{[\s\S]*\.picture-frame \.image-quick-action \{[^}]*opacity: 1;/);
 });
 
 test("playlist playback swaps the large card without scrolling the page", async () => {
@@ -124,6 +133,8 @@ test("recall mode hides every textual answer and plays only the selected card", 
     assert.equal(app.q("#currentTranslation").hidden, true);
     assert.equal(app.q("#editorSection").hidden, true);
     assert.equal(app.q("#imageOptions").hidden, true);
+    assert.equal(app.q("#manageImageQuick").hidden, false);
+    assert.equal(app.q("#manageImageQuick").disabled, false);
     assert.equal(app.q(".sentence-main strong").textContent, "Карточка 1");
     app.q("#revealButton").click();
     assert.equal(app.q("#currentSentence").hidden, false);
@@ -140,7 +151,8 @@ test("image manager searches and attaches a selected result to the current card"
   const app = await launch();
   try {
     app.q("#nextButton").click();
-    app.q("#manageImage").click();
+    assert.equal(app.q("#manageImageQuick").textContent.trim(), "Прикрепить изображение");
+    app.q("#manageImageQuick").click();
     await until(() => app.q("#candidateGrid button"));
     assert.equal(app.q("#imageDialog").open, true);
     app.q("#candidateGrid button").click();

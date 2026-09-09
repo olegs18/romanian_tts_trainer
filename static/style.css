@@ -47,7 +47,10 @@ h3 { margin-bottom: 12px; font-size: 1rem; }
 .study-card { display: grid; grid-template-columns: minmax(260px, .95fr) minmax(0, 1.05fr); gap: clamp(24px, 4vw, 44px); align-items: center; margin: 22px 0; min-height: 380px; }
 .picture-frame { position: relative; aspect-ratio: 1; overflow: hidden; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 19px; background: #17241d; }
 .picture-frame img { width: 100%; height: 100%; object-fit: contain; }
-.picture-frame p { max-width: 320px; margin: 0; padding: 28px; color: var(--muted); text-align: center; line-height: 1.7; }
+.picture-frame p { max-width: 320px; margin: 0; padding: 28px 28px 78px; color: var(--muted); text-align: center; line-height: 1.7; }
+.picture-frame .image-quick-action { position: absolute; right: 14px; bottom: 14px; z-index: 2; opacity: 0; pointer-events: none; transform: translateY(7px); box-shadow: 0 10px 28px rgba(0, 0, 0, .42); transition: opacity 140ms ease, transform 140ms ease, background 120ms ease; }
+.picture-frame:hover .image-quick-action,
+.picture-frame:focus-within .image-quick-action { opacity: 1; pointer-events: auto; transform: translateY(0); }
 .now-playing { min-width: 0; }
 .current-sentence { margin-bottom: 10px; overflow-wrap: anywhere; font-size: clamp(1.7rem, 3.4vw, 3rem); font-weight: 760; line-height: 1.2; letter-spacing: -.028em; }
 .current-translation { min-height: 1.5em; margin: 14px 0 0; color: var(--muted); font-size: 1.05rem; line-height: 1.55; }
@@ -162,4 +165,8 @@ output { color: var(--text); font-variant-numeric: tabular-nums; }
   .play-button { grid-column: 1 / -1; grid-row: 1; }
   .icon-button, .icon-button.wide { min-width: 0; }
   .url-import-row { flex-direction: column; }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .picture-frame .image-quick-action { opacity: 1; pointer-events: auto; transform: translateY(0); }
 }
