@@ -344,6 +344,7 @@ async function selectImage(index, searchData, candidate, button = null) {
     });
     showImage(card, data.image);
     setCardStatus(card, 'картинка сохранена локально', 'ok');
+    updateDeleteButton(true);
     if ($('#imageDialog').open) $('#imageDialog').close();
     return true;
   } catch (error) {
@@ -354,6 +355,113 @@ async function selectImage(index, searchData, candidate, button = null) {
   }
 }
 
+function currentDialogContext() {
+  const index = state.dialogIndex;
+  if (index === null || index < 0) return null;
+  const phrase = state.phrases[index];
+  const card = $$('.card')[index];
+  return phrase && card ? { index, phrase, card } : null;
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function importLocalFile(file, mode) {
+  const context = currentDialogContext();
+  if (!context || !file) return;
+
+  if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+    setCardStatus(context.card, 'Поддерживаются JPEG, PNG, WebP и GIF', 'error');
+    return;
+  }
+  if (file.size > state.maxImageBytes) {
+    setCardStatus(context.card, 'Изображение больше 12 МБ', 'error');
+    return;
+  }
+
+  setCardStatus(context.card, mode === 'clipboard' ? 'сохраняю из буфера…' : 'загружаю файл…');
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    const data = await api('/api/image/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...imagePayload(context.phrase),
+        mode: mode,
+        data_url: dataUrl,
+        filename: file.name || '',
+      }),
+    });
+    showImage(context.card, data.image);
+    setCardStatus(context.card, mode === 'clipboard' ? 'вставлено из буфера' : 'файл сохранён локально', 'ok');
+    updateDeleteButton(true);
+    $('#imageDialog').close();
+  } catch (error) {
+    setCardStatus(context.card, error.message, 'error');
+  }
+}
+
+async function importFromUrl() {
+  const context = currentDialogContext();
+  if (!context) return;
+  const sourceUrl = $('#imageUrlInput').value.trim();
+  if (!sourceUrl) {
+    setCardStatus(context.card, 'Укажите ссылку на изображение', 'error');
+    return;
+  }
+
+  $('#importImageUrl').disabled = true;
+  setCardStatus(context.card, 'скачиваю изображение по ссылке…');
+  try {
+    const data = await api('/api/image/import', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...imagePayload(context.phrase),
+        mode: 'url',
+        source_url: sourceUrl,
+      }),
+    });
+    showImage(context.card, data.image);
+    setCardStatus(context.card, 'изображение по ссылке сохранено локально', 'ok');
+    updateDeleteButton(true);
+    $('#imageDialog').close();
+  } catch (error) {
+    setCardStatus(context.card, error.message, 'error');
+  } finally {
+    $('#importImageUrl').disabled = false;
+  }
+}
+
+async function deleteCurrentImage() {
+  const context = currentDialogContext();
+  if (!context) return;
+
+  $('#deleteImage').disabled = true;
+  try {
+    await api('/api/image/delete', {
+      method: 'POST',
+      body: JSON.stringify(imagePayload(context.phrase)),
+    });
+    clearImage(context.card);
+    setCardStatus(context.card, 'изображение удалено', 'ok');
+    $('#imageDialog').close();
+  } catch (error) {
+    setCardStatus(context.card, error.message, 'error');
+    $('#deleteImage').disabled = false;
+  }
+}
+
+function imageFileFromClipboard(event) {
+  const items = [...(event.clipboardData?.items || [])];
+  const imageItem = items.find(item => item.kind === 'file' && item.type.startsWith('image/'));
+  return imageItem ? imageItem.getAsFile() : null;
+}
+
 async function autoFindMissing() {
   const button = $('#autoFindMissing');
   button.disabled = true;
@@ -362,7 +470,7 @@ async function autoFindMissing() {
     for (let i = 0; i < state.phrases.length; i++) {
       const found = await lookupImage(i);
       if (!found) {
-        const search = await searchImage(i, false);
+        const search = await searchImage(i);
         if (search && search.results.length) await selectImage(i, search, search.results[0]);
       }
       progress.style.width = `${Math.round(((i + 1) / state.phrases.length) * 100)}%`;
