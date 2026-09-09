@@ -498,10 +498,6 @@ function renderCards() {
       phrase.query = query.value.trim();
       $('#phrasesInput').value = serializeLines(state.phrases);
       saveState();
-      $('.mnemonic-image', card).hidden = true;
-      $('.image-placeholder', card).hidden = false;
-      renderCredit(card, null);
-      lookupImage(index);
     });
 
     $('.play-one', card).addEventListener('click', async () => {
@@ -509,8 +505,7 @@ function renderCards() {
       const token = state.stopToken;
       try { await playPhrase(index, token); } catch (error) { setCardStatus(card, error.message, 'error'); }
     });
-    $('.find-image', card).addEventListener('click', () => searchImage(index, true));
-    $('.change-image', card).addEventListener('click', () => searchImage(index, true));
+    $('.manage-image', card).addEventListener('click', () => openImageManager(index));
     container.appendChild(card);
     lookupImage(index);
   });
@@ -526,6 +521,7 @@ async function init() {
   const saved = loadSaved();
   const status = await api('/api/status');
   state.defaults = status.defaults || [];
+  state.maxImageBytes = status.image?.max_bytes || state.maxImageBytes;
   $('#phrasesInput').value = saved.phrases || defaultText();
   $('#rate').value = saved.rate ?? 0;
   $('#pitch').value = saved.pitch ?? 0;
@@ -535,7 +531,7 @@ async function init() {
   $('#hideTranslation').checked = Boolean(saved.hideTranslation);
   updateSliderLabels();
 
-  $('#imageInfo').textContent = 'Openverse: поиск по открыто лицензированным изображениям без API-ключа. Выбранные картинки кешируются локально вместе с данными об авторе и лицензии.';
+  $('#imageInfo').textContent = 'Openverse + буфер обмена + локальный файл + URL. Выбранная картинка кешируется локально и привязана к фразе.';
 
   try {
     const voiceData = await api('/api/voices');
