@@ -28,6 +28,23 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
+
+def load_local_env(path: Path) -> None:
+    """Load simple KEY=VALUE pairs from .env without an extra dependency."""
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+load_local_env(ROOT / ".env")
+
 STATIC_DIR = ROOT / "static"
 CACHE_DIR = ROOT / "cache"
 AUDIO_CACHE_DIR = CACHE_DIR / "audio"
