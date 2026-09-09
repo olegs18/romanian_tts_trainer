@@ -14,9 +14,8 @@ const state = {
 };
 
 function parseLines(text) {
-  return text.split(/?
-/).map(line => line.trim()).filter(Boolean).map(line => {
-    const parts = line.includes('|') ? line.split('|') : line.split('	');
+  return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => {
+    const parts = line.includes('|') ? line.split('|') : line.split('\t');
     return {
       ro: (parts[0] || '').trim(),
       ru: (parts[1] || '').trim(),
@@ -26,13 +25,11 @@ function parseLines(text) {
 }
 
 function serializeLines(phrases) {
-  return phrases.map(p => [p.ro, p.ru, p.query].filter((value, index) => index < 2 || value).join(' | ')).join('
-');
+  return phrases.map(p => [p.ro, p.ru, p.query].filter((value, index) => index < 2 || value).join(' | ')).join('\n');
 }
 
 function defaultText() {
-  return state.defaults.map(([ro, ru, query]) => `${ro} | ${ru} | ${query || ''}`).join('
-');
+  return state.defaults.map(([ro, ru, query]) => `${ro} | ${ru} | ${query || ''}`).join('\n');
 }
 
 function saveState() {
