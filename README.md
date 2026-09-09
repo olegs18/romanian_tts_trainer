@@ -11,6 +11,8 @@
 - повтор всего списка и мгновенная остановка;
 - локальный кеш MP3;
 - поиск картинок через Openverse без API-ключа;
+- опциональный поиск через Google Images API, если у вас уже есть Google Custom Search JSON API key + Search Engine ID;
+- отдельная кнопка «Открыть Google Images» даже без API;
 - вставка изображения прямо из буфера обмена через `Ctrl+V`;
 - drag & drop изображения в окно выбора;
 - выбор JPEG/PNG/WebP/GIF с компьютера;
@@ -51,6 +53,25 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
+
+### Опционально: Google Images внутри приложения
+
+Если у вас уже есть доступ к **Google Custom Search JSON API**, скопируйте пример настроек:
+
+```bash
+cp .env.example .env
+```
+
+и заполните:
+
+```text
+GOOGLE_CSE_API_KEY=...
+GOOGLE_CSE_ID=...
+```
+
+После перезапуска приложения режим **Авто** будет предпочитать Google Images, а Openverse останется доступен вручную.
+
+Важно: Google закрыл Custom Search JSON API для новых клиентов; существующие клиенты могут использовать его до 1 января 2027 года. Поэтому без уже выданных credentials приложение не пытается скрейпить HTML Google Images — вместо этого есть кнопка **«Открыть Google Images»**, после чего найденную картинку можно вставить через `Ctrl+V`, drag & drop, файл или URL.
 
 ## Запуск
 
