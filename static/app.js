@@ -43,6 +43,7 @@ function saveState() {
     repeats: $('#repeats').value,
     listMode: $('#listMode').value,
     hideTranslation: $('#hideTranslation').checked,
+    imageProvider: $('#imageSearchProvider')?.value || 'auto',
   };
   localStorage.setItem(storageKey, JSON.stringify(payload));
 }
@@ -232,7 +233,7 @@ async function lookupImage(index) {
   try {
     const data = await api('/api/image/lookup', {
       method: 'POST',
-      body: JSON.stringify(imagePayload(phrase)),
+      body: JSON.stringify({ ...imagePayload(phrase), provider: provider }),
     });
     if (data.found && data.image) {
       if (!phrase.query && data.query) phrase.query = data.query;
@@ -269,8 +270,12 @@ function renderCandidates(index, searchData) {
     const title = document.createElement('strong');
     title.textContent = candidate.title || 'Без названия';
     const info = document.createElement('span');
-    const license = (candidate.license || 'license ?') + (candidate.license_version ? ' ' + candidate.license_version : '');
-    info.textContent = (candidate.creator || 'автор не указан') + ' · ' + license;
+    if ((candidate.provider || searchData.provider) === 'google') {
+      info.textContent = 'Google Images' + (candidate.creator ? ' · ' + candidate.creator : '');
+    } else {
+      const license = (candidate.license || 'license ?') + (candidate.license_version ? ' ' + candidate.license_version : '');
+      info.textContent = (candidate.creator || 'автор не указан') + ' · ' + license;
+    }
     const choose = document.createElement('button');
     choose.className = 'button small primary';
     choose.textContent = 'Выбрать';
@@ -286,7 +291,8 @@ async function searchImage(index) {
   const card = $$('.card')[index];
   if (!phrase || !card) return null;
   setCardStatus(card, 'ищу картинки…');
-  $('#candidateGrid').textContent = 'Ищу изображения в Openverse…';
+  const provider = $('#imageSearchProvider')?.value || 'auto';
+  $('#candidateGrid').textContent = provider === 'google' ? 'Ищу изображения в Google…' : 'Ищу изображения…';
   try {
     const data = await api('/api/image/search', {
       method: 'POST',
@@ -531,7 +537,16 @@ async function init() {
   $('#hideTranslation').checked = Boolean(saved.hideTranslation);
   updateSliderLabels();
 
-  $('#imageInfo').textContent = 'Openverse + буфер обмена + локальный файл + URL. Выбранная картинка кешируется локально и привязана к фразе.';
+  const googleConfigured = Boolean(status.image?.google?.configured);
+  const googleOption = $('#imageSearchProvider option[value="google"]');
+  if (googleOption) {
+    googleOption.disabled = !googleConfigured;
+    googleOption.textContent = googleConfigured ? 'Google Images API' : 'Google Images API (не настроен)';
+  }
+  $('#imageSearchProvider').value = saved.imageProvider && (saved.imageProvider !== 'google' || googleConfigured) ? saved.imageProvider : 'auto';
+  $('#imageInfo').textContent = googleConfigured
+    ? 'Google Images выбран автоматически; также доступны Openverse, буфер обмена, локальный файл и URL.'
+    : 'Openverse + буфер обмена + локальный файл + URL. Google Images можно открыть отдельной кнопкой.';
 
   try {
     const voiceData = await api('/api/voices');
@@ -569,6 +584,17 @@ $('#autoFindMissing').addEventListener('click', autoFindMissing);
 $('#closeDialog').addEventListener('click', () => $('#imageDialog').close());
 $('#refreshSearch').addEventListener('click', () => {
   if (state.dialogIndex !== null) searchImage(state.dialogIndex);
+});
+$('#imageSearchProvider').addEventListener('change', () => {
+  saveState();
+  if (state.dialogIndex !== null && $('#imageDialog').open) searchImage(state.dialogIndex);
+});
+$('#openGoogleImages').addEventListener('click', () => {
+  const context = currentDialogContext();
+  if (!context) return;
+  const query = context.phrase.query || context.phrase.ru || context.phrase.ro;
+  const url = 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(query);
+  window.open(url, '_blank', 'noopener,noreferrer');
 });
 $('#deleteImage').addEventListener('click', deleteCurrentImage);
 
