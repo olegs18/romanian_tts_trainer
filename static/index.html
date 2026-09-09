@@ -12,7 +12,7 @@
       <div>
         <p class="eyebrow">ROMÂNĂ · LISTEN · RECALL</p>
         <h1>Romanian TTS Trainer</h1>
-        <p class="lead">Слушайте фразу, повторяйте её и закрепляйте смысл подходящим образом, найденным в сети.</p>
+        <p class="lead">Слушайте фразу, повторяйте её и закрепляйте смысл подходящей визуальной ассоциацией.</p>
       </div>
       <div id="connectionBadge" class="badge">локально</div>
     </header>
@@ -66,12 +66,12 @@
     <section class="panel image-panel">
       <div class="panel-title-row">
         <div>
-          <h2>Картинки из сети</h2>
-          <p id="imageInfo">Поиск через Openverse по открыто лицензированным изображениям. Ключ API не нужен.</p>
+          <h2>Изображения</h2>
+          <p id="imageInfo">Можно найти в Openverse, вставить из буфера, выбрать файл или загрузить по ссылке.</p>
         </div>
         <button id="autoFindMissing" class="button accent">Автоподобрать недостающие</button>
       </div>
-      <p class="fineprint">Автоподбор берёт первый релевантный результат. Для важной фразы нажмите «Найти» и выберите картинку вручную.</p>
+      <p class="fineprint">Ручное изображение привязывается к самой фразе и не зависит от поискового запроса.</p>
       <div class="progress"><div id="imageProgress"></div></div>
     </section>
 
@@ -83,11 +83,10 @@
   <template id="cardTemplate">
     <article class="card">
       <div class="image-wrap">
-        <div class="image-placeholder"><span>картинка из сети</span></div>
+        <div class="image-placeholder"><span>нет изображения</span></div>
         <img class="mnemonic-image" alt="Ассоциативная картинка" hidden>
         <div class="image-actions">
-          <button class="mini-button find-image">Найти</button>
-          <button class="mini-button change-image" title="Выбрать другую картинку">↻</button>
+          <button class="mini-button manage-image">Добавить / заменить</button>
         </div>
       </div>
       <div class="card-body">
@@ -109,12 +108,51 @@
   <dialog id="imageDialog" class="image-dialog">
     <div class="dialog-head">
       <div>
-        <h2>Выберите картинку</h2>
-        <p id="dialogQuery" class="muted"></p>
+        <h2>Добавить или заменить изображение</h2>
+        <p id="dialogPhrase" class="muted"></p>
       </div>
-      <button id="closeDialog" class="button ghost">Закрыть</button>
+      <div class="row">
+        <button id="deleteImage" class="button danger">Удалить текущее</button>
+        <button id="closeDialog" class="button ghost">Закрыть</button>
+      </div>
     </div>
-    <div id="candidateGrid" class="candidate-grid"></div>
+
+    <div class="image-source-grid">
+      <section class="source-box">
+        <h3>Буфер обмена / drag & drop</h3>
+        <div id="pasteZone" class="paste-zone" tabindex="0">
+          <strong>Ctrl+V</strong>
+          <span>или перетащите сюда изображение</span>
+        </div>
+      </section>
+
+      <section class="source-box">
+        <h3>Файл с компьютера</h3>
+        <input id="imageFileInput" type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden>
+        <button id="chooseImageFile" class="button">Выбрать фото</button>
+        <p id="fileHint" class="muted">JPEG, PNG, WebP или GIF · до 12 МБ</p>
+      </section>
+
+      <section class="source-box">
+        <h3>Ссылка в сети</h3>
+        <div class="url-import-row">
+          <input id="imageUrlInput" type="url" placeholder="https://example.com/image.jpg">
+          <button id="importImageUrl" class="button">Загрузить</button>
+        </div>
+        <p class="muted">Картинка будет скачана и сохранена локально.</p>
+      </section>
+    </div>
+
+    <section class="search-section">
+      <div class="dialog-subhead">
+        <div>
+          <h3>Найти в Openverse</h3>
+          <p id="dialogQuery" class="muted"></p>
+        </div>
+        <button id="refreshSearch" class="button ghost">Обновить поиск</button>
+      </div>
+      <div id="candidateGrid" class="candidate-grid"></div>
+    </section>
   </dialog>
 
   <audio id="audio" preload="auto"></audio>
