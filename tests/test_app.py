@@ -70,7 +70,8 @@ class HelpersTest(unittest.TestCase):
                 "url": "https://example.org/a-full.jpg",
             }]}
             with patch.object(service, "_request_json", return_value=fake):
-                results = service.search("confused person", 12)
+                results, provider = service.search("confused person", 12, "openverse")
+            self.assertEqual(provider, "openverse")
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0]["id"], "1")
 
@@ -125,6 +126,37 @@ class HelpersTest(unittest.TestCase):
             self.assertIsNotNone(service.lookup("Puteți repeta, vă rog?", "", "q"))
             self.assertTrue(service.delete("Puteți repeta, vă rog?", "", "q"))
             self.assertIsNone(service.lookup("Puteți repeta, vă rog?", "", "q"))
+
+
+    def test_google_candidate_normalization(self):
+        candidate = app.WebImageService._google_candidate({
+            "title": "Greeting",
+            "link": "https://example.org/full.jpg",
+            "displayLink": "example.org",
+            "image": {
+                "thumbnailLink": "https://example.org/thumb.jpg",
+                "contextLink": "https://example.org/page",
+            },
+        })
+        self.assertEqual(candidate["provider"], "google")
+        self.assertEqual(candidate["original_url"], "https://example.org/full.jpg")
+        self.assertEqual(candidate["source_url"], "https://example.org/page")
+
+    def test_auto_search_falls_back_to_openverse_without_google_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            fake = {"results": [{
+                "id": "1",
+                "title": "A",
+                "thumbnail": "https://example.org/a.jpg",
+                "url": "https://example.org/a-full.jpg",
+            }]}
+            with patch.object(service, "_request_json", return_value=fake), \
+                 patch.object(app, "GOOGLE_CSE_API_KEY", ""), \
+                 patch.object(app, "GOOGLE_CSE_ID", ""):
+                results, provider = service.search("hello", 5, "auto")
+            self.assertEqual(provider, "openverse")
+            self.assertEqual(len(results), 1)
 
 
 if __name__ == "__main__":
