@@ -591,6 +591,7 @@ $('#pasteZone').addEventListener('paste', event => {
   const file = imageFileFromClipboard(event);
   if (file) {
     event.preventDefault();
+    event.stopPropagation();
     importLocalFile(file, 'clipboard');
   }
 });
