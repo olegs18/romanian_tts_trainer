@@ -39,7 +39,10 @@ DEFAULT_PORT = 8765
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_BODY_BYTES = 18 * 1024 * 1024
 OPENVERSE_ENDPOINT = "https://api.openverse.org/v1/images/"
-USER_AGENT = "RomanianTTSTrainer/1.2 (local language-learning app)"
+GOOGLE_CSE_ENDPOINT = "https://customsearch.googleapis.com/customsearch/v1"
+GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "").strip()
+GOOGLE_CSE_ID = os.environ.get("GOOGLE_CSE_ID", "").strip()
+USER_AGENT = "RomanianTTSTrainer/1.3 (local language-learning app)"
 
 DEFAULT_PHRASES = [
     ["Bună ziua.", "Добрый день.", "people greeting hello daytime"],
@@ -260,9 +263,39 @@ class WebImageService:
             "source_url": clean_text(item.get("foreign_landing_url"), 2000),
             "thumbnail": preview_url,
             "original_url": original_url,
+            "provider": "openverse",
         }
 
-    def search(self, query: str, count: int = 12) -> list[dict[str, Any]]:
+    @staticmethod
+    def _google_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
+        image = item.get("image") if isinstance(item.get("image"), dict) else {}
+        original_url = clean_text(item.get("link"), 4000)
+        thumbnail = clean_text(image.get("thumbnailLink"), 4000)
+        if not original_url and not thumbnail:
+            return None
+        context_url = clean_text(image.get("contextLink"), 4000)
+        title = clean_text(item.get("title"), 500) or "Без названия"
+        display_link = clean_text(item.get("displayLink"), 500)
+        return {
+            "id": stable_hash("google-image", original_url or thumbnail),
+            "title": title,
+            "creator": display_link,
+            "creator_url": context_url,
+            "license": "",
+            "license_version": "",
+            "license_url": "",
+            "source": "google",
+            "source_url": context_url,
+            "thumbnail": thumbnail or original_url,
+            "original_url": original_url or thumbnail,
+            "provider": "google",
+        }
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID)
+
+    def search_openverse(self, query: str, count: int = 12) -> list[dict[str, Any]]:
         query = clean_text(query, 300)
         if not query:
             raise ValueError("Пустой поисковый запрос для картинки")
@@ -280,6 +313,44 @@ class WebImageService:
             if candidate:
                 candidates.append(candidate)
         return candidates
+
+    def search_google(self, query: str, count: int = 10) -> list[dict[str, Any]]:
+        if not self.google_configured:
+            raise ValueError("Google Images API не настроен: нужны GOOGLE_CSE_API_KEY и GOOGLE_CSE_ID")
+        count = max(1, min(10, count))
+        params = urllib.parse.urlencode({
+            "key": GOOGLE_CSE_API_KEY,
+            "cx": GOOGLE_CSE_ID,
+            "q": query,
+            "searchType": "image",
+            "num": count,
+            "safe": "active",
+        })
+        payload = self._request_json(f"{GOOGLE_CSE_ENDPOINT}?{params}")
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            raise RuntimeError("Google Custom Search не вернул список изображений")
+        candidates = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            candidate = self._google_candidate(item)
+            if candidate:
+                candidates.append(candidate)
+        return candidates
+
+    def search(self, query: str, count: int = 12, provider: str = "auto") -> tuple[list[dict[str, Any]], str]:
+        query = clean_text(query, 300)
+        if not query:
+            raise ValueError("Пустой поисковый запрос для картинки")
+        provider = clean_text(provider, 30).lower() or "auto"
+        if provider == "auto":
+            provider = "google" if self.google_configured else "openverse"
+        if provider == "google":
+            return self.search_google(query, min(count, 10)), "google"
+        if provider == "openverse":
+            return self.search_openverse(query, count), "openverse"
+        raise ValueError("Неизвестный поисковый провайдер")
 
     @staticmethod
     def _validate_remote_url(url: str) -> None:
@@ -431,16 +502,28 @@ class WebImageService:
 
     def select(self, text: str, translation: str, query: str, candidate: dict[str, Any]) -> dict[str, Any]:
         del translation
-        image_url = clean_text(candidate.get("thumbnail"), 2000) or clean_text(candidate.get("original_url"), 2000)
-        if not image_url:
+        urls = []
+        for value in (candidate.get("original_url"), candidate.get("thumbnail")):
+            url = clean_text(value, 4000)
+            if url and url not in urls:
+                urls.append(url)
+        if not urls:
             raise RuntimeError("У выбранного результата нет URL изображения")
-        image_bytes, extension, _final_url = self._download_image(image_url)
+        last_error = None
+        for image_url in urls:
+            try:
+                image_bytes, extension, _final_url = self._download_image(image_url)
+                break
+            except RuntimeError as exc:
+                last_error = exc
+        else:
+            raise last_error or RuntimeError("Не удалось скачать выбранное изображение")
         return self._store(
             text,
             image_bytes,
             extension,
             {
-                "source_type": "openverse",
+                "source_type": clean_text(candidate.get("provider"), 30) or "openverse",
                 "title": candidate.get("title"),
                 "creator": candidate.get("creator"),
                 "creator_url": candidate.get("creator_url"),
@@ -571,7 +654,7 @@ def get_search_candidate(token: str, candidate_id: str) -> dict[str, Any] | None
 
 
 class TrainerHandler(BaseHTTPRequestHandler):
-    server_version = "RomanianTTSTrainer/1.2"
+    server_version = "RomanianTTSTrainer/1.3"
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
@@ -632,10 +715,11 @@ class TrainerHandler(BaseHTTPRequestHandler):
             self._json({
                 "ok": True,
                 "image": {
-                    "provider": "Openverse + manual import",
+                    "provider": "Google Images (optional) + Openverse + manual import",
                     "configured": True,
                     "requires_key": False,
                     "max_bytes": MAX_IMAGE_BYTES,
+                    "google": {"configured": IMAGE_SERVICE.google_configured},
                 },
                 "defaults": DEFAULT_PHRASES,
             })
@@ -710,9 +794,10 @@ class TrainerHandler(BaseHTTPRequestHandler):
 
     def _handle_image_search(self, data: dict[str, Any]) -> None:
         _text, _translation, query = self._image_args(data)
-        candidates = IMAGE_SERVICE.search(query, 12)
+        provider = clean_text(data.get("provider"), 30) or "auto"
+        candidates, resolved_provider = IMAGE_SERVICE.search(query, 12, provider)
         token = remember_search(candidates)
-        self._json({"ok": True, "query": query, "token": token, "results": candidates})
+        self._json({"ok": True, "query": query, "provider": resolved_provider, "token": token, "results": candidates})
 
     def _handle_image_select(self, data: dict[str, Any]) -> None:
         text, translation, query = self._image_args(data)
