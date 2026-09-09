@@ -2,7 +2,7 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const storageKey = 'romanian-tts-trainer-v3';
+const storageKey = 'romanian-tts-trainer-v4';
 
 const state = {
   phrases: [],
@@ -11,6 +11,7 @@ const state = {
   stopToken: 0,
   dialogIndex: null,
   dialogSearch: null,
+  maxImageBytes: 12 * 1024 * 1024,
 };
 
 function parseLines(text) {
@@ -164,37 +165,51 @@ function imagePayload(phrase) {
   return { text: phrase.ro, translation: phrase.ru, query: phrase.query || '' };
 }
 
+function clearImage(card) {
+  const img = $('.mnemonic-image', card);
+  img.hidden = true;
+  img.removeAttribute('src');
+  $('.image-placeholder', card).hidden = false;
+  renderCredit(card, null);
+}
+
+function makeExternalLink(url, label) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.textContent = label;
+  return link;
+}
+
 function renderCredit(card, image) {
   const credit = $('.image-credit', card);
+  credit.innerHTML = '';
   if (!image) {
     credit.hidden = true;
-    credit.textContent = '';
     return;
   }
-  credit.innerHTML = '';
+
   const pieces = [];
-  if (image.creator) pieces.push(document.createTextNode(`Фото: ${image.creator}`));
-  if (image.license) {
-    const licenseText = `${image.license}${image.license_version ? ` ${image.license_version}` : ''}`.toUpperCase();
-    if (image.license_url) {
-      const link = document.createElement('a');
-      link.href = image.license_url;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.textContent = licenseText;
-      pieces.push(link);
-    } else {
-      pieces.push(document.createTextNode(licenseText));
+  const sourceType = image.source_type || 'openverse';
+  if (sourceType === 'openverse') {
+    if (image.creator) pieces.push(document.createTextNode('Автор: ' + image.creator));
+    if (image.license) {
+      const licenseText = (image.license + (image.license_version ? ' ' + image.license_version : '')).toUpperCase();
+      pieces.push(image.license_url ? makeExternalLink(image.license_url, licenseText) : document.createTextNode(licenseText));
     }
+    if (image.source_url) pieces.push(makeExternalLink(image.source_url, 'источник'));
+  } else if (sourceType === 'file') {
+    pieces.push(document.createTextNode('Локальный файл' + (image.original_filename ? ': ' + image.original_filename : '')));
+  } else if (sourceType === 'clipboard') {
+    pieces.push(document.createTextNode('Вставлено из буфера обмена'));
+  } else if (sourceType === 'url') {
+    pieces.push(document.createTextNode('Загружено по ссылке'));
+    if (image.source_url) pieces.push(makeExternalLink(image.source_url, 'источник'));
+  } else {
+    pieces.push(document.createTextNode('Пользовательское изображение'));
   }
-  if (image.source_url) {
-    const source = document.createElement('a');
-    source.href = image.source_url;
-    source.target = '_blank';
-    source.rel = 'noopener noreferrer';
-    source.textContent = 'источник';
-    pieces.push(source);
-  }
+
   pieces.forEach((piece, i) => {
     if (i) credit.append(document.createTextNode(' · '));
     credit.append(piece);
@@ -204,7 +219,7 @@ function renderCredit(card, image) {
 
 function showImage(card, image) {
   const img = $('.mnemonic-image', card);
-  img.src = `${image.url}?v=${Date.now()}`;
+  img.src = image.url + '?v=' + Date.now();
   img.hidden = false;
   $('.image-placeholder', card).hidden = true;
   renderCredit(card, image);
@@ -225,7 +240,10 @@ async function lookupImage(index) {
       showImage(card, data.image);
       return true;
     }
-  } catch {}
+    clearImage(card);
+  } catch {
+    // Image lookup is optional; TTS should continue to work.
+  }
   return false;
 }
 
