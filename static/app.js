@@ -567,12 +567,70 @@ $('#playAll').addEventListener('click', playAll);
 $('#stop').addEventListener('click', stopPlayback);
 $('#autoFindMissing').addEventListener('click', autoFindMissing);
 $('#closeDialog').addEventListener('click', () => $('#imageDialog').close());
+$('#refreshSearch').addEventListener('click', () => {
+  if (state.dialogIndex !== null) searchImage(state.dialogIndex);
+});
+$('#deleteImage').addEventListener('click', deleteCurrentImage);
+
+$('#chooseImageFile').addEventListener('click', () => $('#imageFileInput').click());
+$('#imageFileInput').addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  if (file) importLocalFile(file, 'file');
+  event.target.value = '';
+});
+
+$('#importImageUrl').addEventListener('click', importFromUrl);
+$('#imageUrlInput').addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    importFromUrl();
+  }
+});
+
+$('#pasteZone').addEventListener('paste', event => {
+  const file = imageFileFromClipboard(event);
+  if (file) {
+    event.preventDefault();
+    importLocalFile(file, 'clipboard');
+  }
+});
+
+document.addEventListener('paste', event => {
+  if (!$('#imageDialog').open) return;
+  const file = imageFileFromClipboard(event);
+  if (file) {
+    event.preventDefault();
+    importLocalFile(file, 'clipboard');
+  }
+});
+
+const pasteZone = $('#pasteZone');
+['dragenter', 'dragover'].forEach(type => pasteZone.addEventListener(type, event => {
+  event.preventDefault();
+  pasteZone.classList.add('dragging');
+}));
+['dragleave', 'drop'].forEach(type => pasteZone.addEventListener(type, event => {
+  event.preventDefault();
+  pasteZone.classList.remove('dragging');
+}));
+pasteZone.addEventListener('drop', event => {
+  const file = [...(event.dataTransfer?.files || [])].find(item => item.type.startsWith('image/'));
+  if (file) importLocalFile(file, 'file');
+});
+
 $('#imageDialog').addEventListener('click', event => {
   if (event.target === $('#imageDialog')) $('#imageDialog').close();
 });
-$('#hideTranslation').addEventListener('change', () => { $$('.translation').forEach(el => { el.hidden = $('#hideTranslation').checked; }); saveState(); });
-['voice', 'pause', 'repeats', 'listMode'].forEach(id => $(`#${id}`).addEventListener('change', saveState));
-['rate', 'pitch'].forEach(id => $(`#${id}`).addEventListener('input', () => { updateSliderLabels(); saveState(); }));
+
+$('#hideTranslation').addEventListener('change', () => {
+  $$('.translation').forEach(el => { el.hidden = $('#hideTranslation').checked; });
+  saveState();
+});
+['voice', 'pause', 'repeats', 'listMode'].forEach(id => $('#' + id).addEventListener('change', saveState));
+['rate', 'pitch'].forEach(id => $('#' + id).addEventListener('input', () => {
+  updateSliderLabels();
+  saveState();
+}));
 window.addEventListener('beforeunload', saveState);
 
 init().catch(error => {
