@@ -131,7 +131,7 @@ async function playPhrase(index, token) {
   const phrase = state.phrases[index];
   const card = $$('.card')[index];
   if (!phrase || !card || token !== state.stopToken) return;
-  $('.card').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
   card.classList.add('active');
   scrollCardIntoView(card);
   $('#playbackStatus').textContent = `${index + 1}/${state.phrases.length}: ${phrase.ro}`;
