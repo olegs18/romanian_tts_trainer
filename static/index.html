@@ -146,10 +146,18 @@
     <section class="search-section">
       <div class="dialog-subhead">
         <div>
-          <h3>Найти в Openverse</h3>
+          <h3>Найти в сети</h3>
           <p id="dialogQuery" class="muted"></p>
         </div>
-        <button id="refreshSearch" class="button ghost">Обновить поиск</button>
+        <div class="search-provider-controls">
+          <select id="imageSearchProvider" aria-label="Источник поиска картинок">
+            <option value="auto">Авто</option>
+            <option value="google">Google Images API</option>
+            <option value="openverse">Openverse</option>
+          </select>
+          <button id="openGoogleImages" class="button ghost">Открыть Google Images</button>
+          <button id="refreshSearch" class="button ghost">Обновить поиск</button>
+        </div>
       </div>
       <div id="candidateGrid" class="candidate-grid"></div>
     </section>
