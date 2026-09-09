@@ -316,8 +316,16 @@ class WebImageService:
     def _download_image(self, url: str) -> tuple[bytes, str, str]:
         self._validate_remote_url(url)
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "image/*"})
+        service = self
+
+        class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                service._validate_remote_url(newurl)
+                return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+        opener = urllib.request.build_opener(SafeRedirectHandler())
         try:
-            with urllib.request.urlopen(request, timeout=45) as response:
+            with opener.open(request, timeout=45) as response:
                 final_url = response.geturl()
                 self._validate_remote_url(final_url)
                 content_type = response.headers.get_content_type().lower()
