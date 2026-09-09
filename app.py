@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Romanian TTS Trainer: local browser app with Edge TTS and web image search."""
+"""Romanian TTS Trainer: local browser app with Edge TTS and flexible image sources."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
+import binascii
 import hashlib
 import ipaddress
 import json
@@ -34,10 +36,10 @@ VOICE_CACHE_FILE = CACHE_DIR / "voices-ro-RO.json"
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-MAX_BODY_BYTES = 128 * 1024
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
+MAX_BODY_BYTES = 18 * 1024 * 1024
 OPENVERSE_ENDPOINT = "https://api.openverse.org/v1/images/"
-USER_AGENT = "RomanianTTSTrainer/1.1 (local language-learning app)"
+USER_AGENT = "RomanianTTSTrainer/1.2 (local language-learning app)"
 
 DEFAULT_PHRASES = [
     ["Bună ziua.", "Добрый день.", "people greeting hello daytime"],
@@ -60,6 +62,13 @@ FALLBACK_VOICES = [
     {"ShortName": "ro-RO-AlinaNeural", "Gender": "Female", "Locale": "ro-RO"},
     {"ShortName": "ro-RO-EmilNeural", "Gender": "Male", "Locale": "ro-RO"},
 ]
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
 
 CACHE_LOCK = threading.Lock()
 SEARCH_LOCK = threading.Lock()
@@ -192,17 +201,25 @@ class VoiceService:
 
 
 class WebImageService:
-    """Search Openverse and cache the user's selected openly licensed image."""
+    """Search Openverse and store one active image per Romanian phrase."""
 
     def __init__(self, cache_dir: Path = IMAGE_CACHE_DIR, endpoint: str = OPENVERSE_ENDPOINT):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.endpoint = endpoint
 
+    def phrase_key(self, text: str) -> str:
+        return stable_hash("phrase-image-v2", text.strip())
+
     def key(self, text: str, translation: str, query: str) -> str:
+        """Legacy query-bound key kept for compatibility with older caches/tests."""
         return stable_hash("openverse-selection-v1", text, translation, query)
 
-    def manifest_path(self, text: str, translation: str, query: str) -> Path:
+    def manifest_path(self, text: str, translation: str = "", query: str = "") -> Path:
+        del translation, query
+        return self.cache_dir / f"{self.phrase_key(text)}.json"
+
+    def legacy_manifest_path(self, text: str, translation: str, query: str) -> Path:
         return self.cache_dir / f"{self.key(text, translation, query)}.json"
 
     def _request_json(self, url: str) -> dict[str, Any]:
@@ -285,17 +302,34 @@ class WebImageService:
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
                 raise RuntimeError("Небезопасный адрес изображения")
 
-    def _download_image(self, url: str) -> tuple[bytes, str]:
+    @staticmethod
+    def _validate_image_signature(data: bytes, content_type: str) -> None:
+        valid = {
+            "image/jpeg": data.startswith(b"\xff\xd8\xff"),
+            "image/png": data.startswith(b"\x89PNG\r\n\x1a\n"),
+            "image/gif": data.startswith((b"GIF87a", b"GIF89a")),
+            "image/webp": len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP",
+        }
+        if not valid.get(content_type, False):
+            raise RuntimeError("Содержимое файла не похоже на заявленный формат изображения")
+
+    def _download_image(self, url: str) -> tuple[bytes, str, str]:
         self._validate_remote_url(url)
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "image/*"})
         try:
             with urllib.request.urlopen(request, timeout=45) as response:
+                final_url = response.geturl()
+                self._validate_remote_url(final_url)
                 content_type = response.headers.get_content_type().lower()
-                if content_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+                if content_type not in ALLOWED_IMAGE_TYPES:
                     raise RuntimeError(f"Неподдерживаемый тип изображения: {content_type}")
                 announced = response.headers.get("Content-Length")
-                if announced and int(announced) > MAX_IMAGE_BYTES:
-                    raise RuntimeError("Изображение слишком большое")
+                if announced:
+                    try:
+                        if int(announced) > MAX_IMAGE_BYTES:
+                            raise RuntimeError("Изображение слишком большое")
+                    except ValueError:
+                        pass
                 data = response.read(MAX_IMAGE_BYTES + 1)
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"Не удалось скачать изображение: HTTP {exc.code}") from exc
@@ -305,28 +339,61 @@ class WebImageService:
             raise RuntimeError("Изображение слишком большое")
         if not data:
             raise RuntimeError("Получен пустой файл изображения")
-        extension = {
-            "image/jpeg": ".jpg",
-            "image/png": ".png",
-            "image/webp": ".webp",
-            "image/gif": ".gif",
-        }[content_type]
-        return data, extension
+        self._validate_image_signature(data, content_type)
+        return data, ALLOWED_IMAGE_TYPES[content_type], final_url
 
-    def select(self, text: str, translation: str, query: str, candidate: dict[str, Any]) -> dict[str, Any]:
-        key = self.key(text, translation, query)
-        image_url = clean_text(candidate.get("thumbnail"), 2000) or clean_text(candidate.get("original_url"), 2000)
-        if not image_url:
-            raise RuntimeError("У выбранного результата нет URL изображения")
-        image_bytes, extension = self._download_image(image_url)
+    def _decode_data_url(self, data_url: str) -> tuple[bytes, str, str]:
+        if not isinstance(data_url, str):
+            raise ValueError("Изображение не передано")
+        match = re.fullmatch(
+            r"data:(image/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=\r\n]+)",
+            data_url.strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            raise ValueError("Поддерживаются только JPEG, PNG, WebP и GIF")
+        content_type = match.group(1).lower()
+        encoded = re.sub(r"\s+", "", match.group(2))
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Некорректные base64-данные изображения") from exc
+        if not data:
+            raise ValueError("Получен пустой файл изображения")
+        if len(data) > MAX_IMAGE_BYTES:
+            raise ValueError("Изображение слишком большое")
+        self._validate_image_signature(data, content_type)
+        return data, ALLOWED_IMAGE_TYPES[content_type], content_type
 
+    def _remove_active_locked(self, text: str) -> None:
+        key = self.phrase_key(text)
+        manifest = self.cache_dir / f"{key}.json"
+        if manifest.exists():
+            try:
+                metadata = json.loads(manifest.read_text(encoding="utf-8"))
+                filename = metadata.get("filename")
+                if isinstance(filename, str):
+                    target = self.cache_dir / Path(filename).name
+                    if target.parent == self.cache_dir:
+                        target.unlink(missing_ok=True)
+            except (OSError, json.JSONDecodeError):
+                pass
+            manifest.unlink(missing_ok=True)
+        for old in self.cache_dir.glob(f"{key}.*"):
+            old.unlink(missing_ok=True)
+
+    def _store(
+        self,
+        text: str,
+        image_bytes: bytes,
+        extension: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        key = self.phrase_key(text)
         with CACHE_LOCK:
-            for old in self.cache_dir.glob(f"{key}.*"):
-                if old.suffix != ".json":
-                    old.unlink(missing_ok=True)
-
+            self._remove_active_locked(text)
             target = self.cache_dir / f"{key}{extension}"
-            fd, tmp_name = tempfile.mkstemp(prefix="web-image-", suffix=extension, dir=self.cache_dir)
+            fd, tmp_name = tempfile.mkstemp(prefix="phrase-image-", suffix=extension, dir=self.cache_dir)
             try:
                 with os.fdopen(fd, "wb") as fh:
                     fh.write(image_bytes)
@@ -334,44 +401,145 @@ class WebImageService:
             finally:
                 Path(tmp_name).unlink(missing_ok=True)
 
-            metadata = {
+            stored = {
                 "filename": target.name,
-                "title": clean_text(candidate.get("title"), 500),
-                "creator": clean_text(candidate.get("creator"), 500),
-                "creator_url": clean_text(candidate.get("creator_url"), 2000),
-                "license": clean_text(candidate.get("license"), 100),
-                "license_version": clean_text(candidate.get("license_version"), 100),
-                "license_url": clean_text(candidate.get("license_url"), 2000),
-                "source": clean_text(candidate.get("source"), 100),
-                "source_url": clean_text(candidate.get("source_url"), 2000),
-                "query": query,
+                "source_type": clean_text(metadata.get("source_type"), 50) or "unknown",
+                "title": clean_text(metadata.get("title"), 500),
+                "creator": clean_text(metadata.get("creator"), 500),
+                "creator_url": clean_text(metadata.get("creator_url"), 2000),
+                "license": clean_text(metadata.get("license"), 100),
+                "license_version": clean_text(metadata.get("license_version"), 100),
+                "license_url": clean_text(metadata.get("license_url"), 2000),
+                "source": clean_text(metadata.get("source"), 100),
+                "source_url": clean_text(metadata.get("source_url"), 2000),
+                "original_filename": clean_text(metadata.get("original_filename"), 500),
+                "query": clean_text(metadata.get("query"), 300),
             }
-            self.manifest_path(text, translation, query).write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2),
+            self.manifest_path(text).write_text(
+                json.dumps(stored, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+        return self.lookup(text, "", "") or {}
 
-        return self.lookup(text, translation, query) or {}
+    def select(self, text: str, translation: str, query: str, candidate: dict[str, Any]) -> dict[str, Any]:
+        del translation
+        image_url = clean_text(candidate.get("thumbnail"), 2000) or clean_text(candidate.get("original_url"), 2000)
+        if not image_url:
+            raise RuntimeError("У выбранного результата нет URL изображения")
+        image_bytes, extension, _final_url = self._download_image(image_url)
+        return self._store(
+            text,
+            image_bytes,
+            extension,
+            {
+                "source_type": "openverse",
+                "title": candidate.get("title"),
+                "creator": candidate.get("creator"),
+                "creator_url": candidate.get("creator_url"),
+                "license": candidate.get("license"),
+                "license_version": candidate.get("license_version"),
+                "license_url": candidate.get("license_url"),
+                "source": candidate.get("source"),
+                "source_url": candidate.get("source_url"),
+                "query": query,
+            },
+        )
 
-    def lookup(self, text: str, translation: str, query: str) -> dict[str, Any] | None:
-        manifest = self.manifest_path(text, translation, query)
+    def import_data_url(
+        self,
+        text: str,
+        data_url: str,
+        source_type: str,
+        original_filename: str = "",
+    ) -> dict[str, Any]:
+        if source_type not in {"clipboard", "file"}:
+            raise ValueError("Некорректный источник локального изображения")
+        image_bytes, extension, _content_type = self._decode_data_url(data_url)
+        return self._store(
+            text,
+            image_bytes,
+            extension,
+            {
+                "source_type": source_type,
+                "original_filename": original_filename,
+            },
+        )
+
+    def import_url(self, text: str, source_url: str) -> dict[str, Any]:
+        source_url = clean_text(source_url, 4000)
+        if not source_url:
+            raise ValueError("Не указана ссылка на изображение")
+        image_bytes, extension, final_url = self._download_image(source_url)
+        return self._store(
+            text,
+            image_bytes,
+            extension,
+            {
+                "source_type": "url",
+                "source_url": final_url,
+            },
+        )
+
+    def _lookup_manifest(self, manifest: Path) -> dict[str, Any] | None:
         if not manifest.exists():
             return None
         try:
             metadata = json.loads(manifest.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-
         filename = metadata.get("filename")
         if not isinstance(filename, str) or not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png|webp|gif)", filename):
             return None
         target = self.cache_dir / filename
         if not target.exists() or target.stat().st_size <= 0:
             return None
-
         result = dict(metadata)
+        result.setdefault("source_type", "openverse")
         result["url"] = f"/cache/images/{filename}"
         return result
+
+    def lookup(self, text: str, translation: str, query: str) -> dict[str, Any] | None:
+        active = self._lookup_manifest(self.manifest_path(text))
+        if active:
+            return active
+
+        # Compatibility with images selected by v1.1, which were bound to the search query.
+        legacy = self._lookup_manifest(self.legacy_manifest_path(text, translation, query))
+        if not legacy:
+            return None
+
+        legacy_path = self.cache_dir / legacy["filename"]
+        try:
+            data = legacy_path.read_bytes()
+        except OSError:
+            return None
+        extension = legacy_path.suffix.lower()
+        migrated = dict(legacy)
+        migrated["source_type"] = migrated.get("source_type") or "openverse"
+        migrated["query"] = migrated.get("query") or query
+        return self._store(text, data, extension, migrated)
+
+    def delete(self, text: str, translation: str, query: str) -> bool:
+        deleted = False
+        with CACHE_LOCK:
+            key = self.phrase_key(text)
+            manifest = self.cache_dir / f"{key}.json"
+            if manifest.exists():
+                self._remove_active_locked(text)
+                deleted = True
+
+            legacy_manifest = self.legacy_manifest_path(text, translation, query)
+            if legacy_manifest.exists():
+                try:
+                    metadata = json.loads(legacy_manifest.read_text(encoding="utf-8"))
+                    filename = metadata.get("filename")
+                    if isinstance(filename, str):
+                        (self.cache_dir / Path(filename).name).unlink(missing_ok=True)
+                except (OSError, json.JSONDecodeError):
+                    pass
+                legacy_manifest.unlink(missing_ok=True)
+                deleted = True
+        return deleted
 
 
 AUDIO_SERVICE = AudioService()
@@ -395,7 +563,7 @@ def get_search_candidate(token: str, candidate_id: str) -> dict[str, Any] | None
 
 
 class TrainerHandler(BaseHTTPRequestHandler):
-    server_version = "RomanianTTSTrainer/1.1"
+    server_version = "RomanianTTSTrainer/1.2"
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
@@ -455,7 +623,12 @@ class TrainerHandler(BaseHTTPRequestHandler):
         if path == "/api/status":
             self._json({
                 "ok": True,
-                "image": {"provider": "Openverse", "configured": True, "requires_key": False},
+                "image": {
+                    "provider": "Openverse + manual import",
+                    "configured": True,
+                    "requires_key": False,
+                    "max_bytes": MAX_IMAGE_BYTES,
+                },
                 "defaults": DEFAULT_PHRASES,
             })
             return
@@ -494,6 +667,10 @@ class TrainerHandler(BaseHTTPRequestHandler):
                 self._handle_image_select(data)
             elif path == "/api/image/lookup":
                 self._handle_image_lookup(data)
+            elif path == "/api/image/import":
+                self._handle_image_import(data)
+            elif path == "/api/image/delete":
+                self._handle_image_delete(data)
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except ValueError as exc:
@@ -543,6 +720,27 @@ class TrainerHandler(BaseHTTPRequestHandler):
         text, translation, query = self._image_args(data)
         selected = IMAGE_SERVICE.lookup(text, translation, query)
         self._json({"ok": True, "found": bool(selected), "query": query, "image": selected})
+
+    def _handle_image_import(self, data: dict[str, Any]) -> None:
+        text, _translation, _query = self._image_args(data)
+        mode = clean_text(data.get("mode"), 30)
+        if mode == "url":
+            selected = IMAGE_SERVICE.import_url(text, clean_text(data.get("source_url"), 4000))
+        elif mode in {"clipboard", "file"}:
+            selected = IMAGE_SERVICE.import_data_url(
+                text,
+                data.get("data_url", ""),
+                mode,
+                clean_text(data.get("filename"), 500),
+            )
+        else:
+            raise ValueError("Неизвестный способ добавления изображения")
+        self._json({"ok": True, "image": selected})
+
+    def _handle_image_delete(self, data: dict[str, Any]) -> None:
+        text, translation, query = self._image_args(data)
+        deleted = IMAGE_SERVICE.delete(text, translation, query)
+        self._json({"ok": True, "deleted": deleted})
 
 
 def parse_args() -> argparse.Namespace:
