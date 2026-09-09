@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Romanian TTS Trainer</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">ROMÂNĂ · LISTEN · RECALL</p>
+        <h1>Romanian TTS Trainer</h1>
+        <p class="lead">Слушайте фразу, повторяйте её и закрепляйте смысл подходящим образом, найденным в сети.</p>
+      </div>
+      <div id="connectionBadge" class="badge">локально</div>
+    </header>
+
+    <section class="panel editor-panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Фразы</h2>
+          <p>Одна строка = одна карточка. Формат: <code>Română | Русский | запрос картинки</code>. Третий столбец необязателен.</p>
+        </div>
+        <button id="loadDefaults" class="button ghost">Вернуть базовый набор</button>
+      </div>
+      <textarea id="phrasesInput" spellcheck="false" aria-label="Фразы"></textarea>
+      <div class="row actions-row">
+        <button id="applyPhrases" class="button primary">Обновить карточки</button>
+        <label class="check"><input id="hideTranslation" type="checkbox"> Скрывать перевод</label>
+      </div>
+    </section>
+
+    <section class="panel settings-panel">
+      <div class="settings-grid">
+        <label>Голос
+          <select id="voice"></select>
+        </label>
+        <label>Скорость <span id="rateValue">0%</span>
+          <input id="rate" type="range" min="-40" max="60" step="5" value="0">
+        </label>
+        <label>Высота <span id="pitchValue">0 Hz</span>
+          <input id="pitch" type="range" min="-50" max="50" step="5" value="0">
+        </label>
+        <label>Пауза между повторами, сек.
+          <input id="pause" type="number" min="0" max="20" step="0.25" value="1.5">
+        </label>
+        <label>Повторов каждой фразы
+          <select id="repeats">
+            <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option>
+            <option value="5">5</option><option value="10">10</option>
+          </select>
+        </label>
+        <label>После последней фразы
+          <select id="listMode"><option value="stop">остановиться</option><option value="loop">повторять весь список</option></select>
+        </label>
+      </div>
+      <div class="row playback-row">
+        <button id="playAll" class="button primary big">▶ Воспроизвести список</button>
+        <button id="stop" class="button danger">■ Стоп</button>
+        <span id="playbackStatus" class="muted">Готово</span>
+      </div>
+    </section>
+
+    <section class="panel image-panel">
+      <div class="panel-title-row">
+        <div>
+          <h2>Картинки из сети</h2>
+          <p id="imageInfo">Поиск через Openverse по открыто лицензированным изображениям. Ключ API не нужен.</p>
+        </div>
+        <button id="autoFindMissing" class="button accent">Автоподобрать недостающие</button>
+      </div>
+      <p class="fineprint">Автоподбор берёт первый релевантный результат. Для важной фразы нажмите «Найти» и выберите картинку вручную.</p>
+      <div class="progress"><div id="imageProgress"></div></div>
+    </section>
+
+    <section>
+      <div id="cards" class="cards"></div>
+    </section>
+  </main>
+
+  <template id="cardTemplate">
+    <article class="card">
+      <div class="image-wrap">
+        <div class="image-placeholder"><span>картинка из сети</span></div>
+        <img class="mnemonic-image" alt="Ассоциативная картинка" hidden>
+        <div class="image-actions">
+          <button class="mini-button find-image">Найти</button>
+          <button class="mini-button change-image" title="Выбрать другую картинку">↻</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="card-index"></div>
+        <div class="romanian"></div>
+        <div class="translation"></div>
+        <div class="image-credit" hidden></div>
+        <label class="hint-label">Поисковый запрос картинки
+          <input class="image-query" type="text" placeholder="необязательно; английский обычно даёт лучшие результаты">
+        </label>
+        <div class="row card-controls">
+          <button class="button small play-one">▶ Слушать</button>
+          <span class="card-status muted"></span>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <dialog id="imageDialog" class="image-dialog">
+    <div class="dialog-head">
+      <div>
+        <h2>Выберите картинку</h2>
+        <p id="dialogQuery" class="muted"></p>
+      </div>
+      <button id="closeDialog" class="button ghost">Закрыть</button>
+    </div>
+    <div id="candidateGrid" class="candidate-grid"></div>
+  </dialog>
+
+  <audio id="audio" preload="auto"></audio>
+  <script src="/static/app.js"></script>
+</body>
+</html>
