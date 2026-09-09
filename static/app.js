@@ -247,38 +247,16 @@ async function lookupImage(index) {
   return false;
 }
 
-async function searchImage(index, showDialog = true) {
-  const phrase = state.phrases[index];
-  const card = $$('.card')[index];
-  if (!phrase || !card) return null;
-  setCardStatus(card, 'ищу картинки…');
-  try {
-    const data = await api('/api/image/search', {
-      method: 'POST',
-      body: JSON.stringify(imagePayload(phrase)),
-    });
-    phrase.query = data.query;
-    $('.image-query', card).value = data.query;
-    $('#phrasesInput').value = serializeLines(state.phrases);
-    saveState();
-    setCardStatus(card, data.results.length ? `найдено: ${data.results.length}` : 'ничего не найдено', data.results.length ? 'ok' : 'error');
-    if (showDialog) openImageDialog(index, data);
-    return data;
-  } catch (error) {
-    setCardStatus(card, error.message, 'error');
-    return null;
-  }
-}
-
-function openImageDialog(index, searchData) {
-  state.dialogIndex = index;
+function renderCandidates(index, searchData) {
   state.dialogSearch = searchData;
-  $('#dialogQuery').textContent = `Запрос: ${searchData.query}`;
+  $('#dialogQuery').textContent = 'Запрос: ' + searchData.query;
   const grid = $('#candidateGrid');
   grid.innerHTML = '';
   if (!searchData.results.length) {
-    grid.textContent = 'Ничего не найдено. Измените поисковый запрос в карточке.';
+    grid.textContent = 'Ничего не найдено. Измените поисковый запрос в карточке и повторите поиск.';
+    return;
   }
+
   searchData.results.forEach(candidate => {
     const item = document.createElement('article');
     item.className = 'candidate';
@@ -291,8 +269,8 @@ function openImageDialog(index, searchData) {
     const title = document.createElement('strong');
     title.textContent = candidate.title || 'Без названия';
     const info = document.createElement('span');
-    const license = `${candidate.license || 'license ?'}${candidate.license_version ? ` ${candidate.license_version}` : ''}`;
-    info.textContent = `${candidate.creator || 'автор не указан'} · ${license}`;
+    const license = (candidate.license || 'license ?') + (candidate.license_version ? ' ' + candidate.license_version : '');
+    info.textContent = (candidate.creator || 'автор не указан') + ' · ' + license;
     const choose = document.createElement('button');
     choose.className = 'button small primary';
     choose.textContent = 'Выбрать';
@@ -301,8 +279,52 @@ function openImageDialog(index, searchData) {
     item.append(img, meta);
     grid.appendChild(item);
   });
+}
+
+async function searchImage(index) {
+  const phrase = state.phrases[index];
+  const card = $$('.card')[index];
+  if (!phrase || !card) return null;
+  setCardStatus(card, 'ищу картинки…');
+  $('#candidateGrid').textContent = 'Ищу изображения в Openverse…';
+  try {
+    const data = await api('/api/image/search', {
+      method: 'POST',
+      body: JSON.stringify(imagePayload(phrase)),
+    });
+    phrase.query = data.query;
+    $('.image-query', card).value = data.query;
+    $('#phrasesInput').value = serializeLines(state.phrases);
+    saveState();
+    setCardStatus(card, data.results.length ? 'найдено: ' + data.results.length : 'ничего не найдено', data.results.length ? 'ok' : 'error');
+    renderCandidates(index, data);
+    return data;
+  } catch (error) {
+    setCardStatus(card, error.message, 'error');
+    $('#candidateGrid').textContent = error.message;
+    return null;
+  }
+}
+
+function updateDeleteButton(hasImage) {
+  $('#deleteImage').disabled = !hasImage;
+}
+
+async function openImageManager(index) {
+  state.dialogIndex = index;
+  state.dialogSearch = null;
+  const phrase = state.phrases[index];
+  if (!phrase) return;
+
+  $('#dialogPhrase').textContent = phrase.ro + (phrase.ru ? ' — ' + phrase.ru : '');
+  $('#imageUrlInput').value = '';
+  $('#candidateGrid').textContent = 'Поиск ещё не выполнен.';
+
   const dialog = $('#imageDialog');
   if (!dialog.open) dialog.showModal();
+
+  updateDeleteButton(await lookupImage(index));
+  await searchImage(index);
 }
 
 async function selectImage(index, searchData, candidate, button = null) {
