@@ -17,9 +17,13 @@ const elements = {
   imageQuery: $('#imageQueryInput'),
   imageInfo: $('#imageInfo'),
   imageStatus: $('#imageStatus'),
+  batchImageStatus: $('#batchImageStatus'),
   imageProgress: $('#imageProgress'),
   imageOptions: $('#imageOptions'),
-  manageImageQuick: $('#manageImageQuick'),
+  manageImage: $('#manageImage'),
+  manageImageLabel: $('#manageImageLabel'),
+  generateImage: $('#generateImage'),
+  generatorInfo: $('#generatorInfo'),
   voice: $('#voice'),
   rate: $('#rate'),
   pitch: $('#pitch'),
@@ -43,8 +47,6 @@ const elements = {
   dialog: $('#imageDialog'),
   dialogPhrase: $('#dialogPhrase'),
   dialogQuery: $('#dialogQuery'),
-  candidates: $('#candidateGrid'),
-  provider: $('#imageSearchProvider'),
   pasteZone: $('#pasteZone'),
   fileInput: $('#imageFileInput'),
   urlInput: $('#imageUrlInput'),
@@ -65,9 +67,8 @@ const state = {
   lookupId: 0,
   revealed: false,
   dialogIndex: null,
-  dialogSearch: null,
   maxImageBytes: 12 * 1024 * 1024,
-  googleConfigured: false,
+  cloudflareConfigured: false,
   batchActive: false,
   cancelBatch: false,
 };
@@ -127,7 +128,6 @@ function loadSaved() {
       settings: {
         voice: v4.voice, rate: v4.rate, pitch: v4.pitch, pause: v4.pause,
         repeats: v4.repeats, loop: v4.listMode === 'loop', hideTranslation: v4.hideTranslation,
-        provider: v4.imageProvider,
       },
     };
   }
@@ -154,7 +154,6 @@ function settings() {
     loop: elements.loop.checked,
     hideTranslation: elements.hideTranslation.checked,
     recall: elements.recall.checked,
-    provider: elements.provider.value,
   };
 }
 
@@ -175,7 +174,6 @@ function restoreSettings(saved = {}) {
   elements.hideTranslation.checked = Boolean(saved.hideTranslation);
   elements.recall.checked = Boolean(saved.recall);
   elements.voice.dataset.savedVoice = saved.voice || '';
-  elements.provider.dataset.savedProvider = saved.provider || 'auto';
 }
 
 function updateRangeOutputs() {
@@ -193,6 +191,11 @@ function setError(message = '') {
 function setImageStatus(message = '', error = false) {
   elements.imageStatus.textContent = message;
   elements.imageStatus.style.color = error ? 'var(--red)' : '';
+}
+
+function setBatchImageStatus(message = '', error = false) {
+  elements.batchImageStatus.textContent = message;
+  elements.batchImageStatus.style.color = error ? 'var(--red)' : '';
 }
 
 function imageFor(item) {
@@ -233,7 +236,7 @@ function renderCredit(image, hide) {
     elements.credit.hidden = true;
     return;
   }
-  const type = image.source_type || 'openverse';
+  const type = image.source_type || 'legacy';
   if (type === 'openverse') {
     if (image.creator) appendCredit(elements.credit, `Автор: ${image.creator}`, image.creator_url);
     if (image.license) {
@@ -243,6 +246,8 @@ function renderCredit(image, hide) {
     if (image.source_url) appendCredit(elements.credit, 'Источник', image.source_url);
   } else if (type === 'google') {
     appendCredit(elements.credit, image.creator ? `Google Images · ${image.creator}` : 'Google Images', image.source_url);
+  } else if (type === 'cloudflare') {
+    appendCredit(elements.credit, 'Сгенерировано FLUX.1 Schnell', image.source_url);
   } else if (type === 'file') {
     appendCredit(elements.credit, image.original_filename ? `Файл: ${image.original_filename}` : 'Локальный файл');
   } else if (type === 'clipboard') {
@@ -331,12 +336,12 @@ function renderCurrent(repeatNumber = null) {
     elements.image.removeAttribute('src');
     elements.imagePlaceholder.hidden = false;
     elements.imagePlaceholder.textContent = 'Добавьте фразы для тренировки.';
-    elements.manageImageQuick.textContent = 'Прикрепить изображение';
-    elements.manageImageQuick.disabled = true;
     elements.recallHint.hidden = true;
     elements.reveal.hidden = true;
     elements.credit.hidden = true;
     elements.imageQuery.value = '';
+    elements.manageImage.disabled = true;
+    elements.manageImageLabel.textContent = 'Добавить изображение';
     return;
   }
 
@@ -350,7 +355,7 @@ function renderCurrent(repeatNumber = null) {
   elements.progressText.textContent = `${state.currentIndex + 1} / ${total}`;
   elements.progressBar.style.width = `${((state.currentIndex + 1) / total) * 100}%`;
   elements.playerState.textContent = repeatNumber ? `Повтор ${repeatNumber}` : (state.playing ? 'Воспроизведение' : 'Готов');
-  if (document.activeElement !== elements.imageQuery) elements.imageQuery.value = item.query || '';
+  if (document.activeElement !== elements.imageQuery) elements.imageQuery.value = item.query || item.ru || item.ro;
 
   const stored = imageFor(item);
   if (stored) {
@@ -362,13 +367,11 @@ function renderCurrent(repeatNumber = null) {
     elements.image.hidden = true;
     elements.image.removeAttribute('src');
     elements.imagePlaceholder.hidden = false;
-    elements.imagePlaceholder.textContent = 'У этой фразы пока нет изображения. Прикрепите запоминающуюся ассоциацию.';
+    elements.imagePlaceholder.textContent = 'У этой фразы пока нет изображения.';
   }
   renderCredit(stored, recallHidden);
-  elements.manageImageQuick.textContent = stored ? 'Заменить изображение' : 'Прикрепить изображение';
-  elements.manageImageQuick.disabled = false;
-  $('#manageImage').disabled = false;
-  $('#saveImageQuery').disabled = false;
+  elements.manageImage.disabled = false;
+  elements.manageImageLabel.textContent = stored ? 'Заменить изображение' : 'Добавить изображение';
   $('#deleteCurrentImage').disabled = !stored;
 }
 
@@ -385,7 +388,7 @@ function updateControls() {
   elements.pauseButton.textContent = state.paused ? '▶ Продолжить' : 'Ⅱ Пауза';
   elements.previous.disabled = !state.sentences.length;
   elements.next.disabled = !state.sentences.length;
-  $('#autoFindMissing').disabled = !state.sentences.length && !state.batchActive;
+  $('#autoFindMissing').disabled = (!state.sentences.length || !state.cloudflareConfigured) && !state.batchActive;
 }
 
 function selectSentence(index) {
@@ -590,90 +593,69 @@ function currentDialogContext() {
   return item ? {index, item} : null;
 }
 
-function renderCandidates(context, data) {
-  state.dialogSearch = {contextKey: phraseKey(context.item), ...data};
-  elements.dialogQuery.textContent = `Запрос: ${data.query}`;
-  elements.candidates.replaceChildren();
-  if (!data.results.length) {
-    elements.candidates.textContent = 'Ничего не найдено. Измените поисковый запрос и повторите поиск.';
-    return;
-  }
-  for (const candidate of data.results) {
-    const card = document.createElement('article');
-    card.className = 'candidate';
-    const image = document.createElement('img');
-    image.src = candidate.thumbnail;
-    image.alt = candidate.title || 'Результат поиска';
-    image.loading = 'lazy';
-    const meta = document.createElement('div');
-    meta.className = 'candidate-meta';
-    const title = document.createElement('strong');
-    title.textContent = candidate.title || 'Без названия';
-    const info = document.createElement('span');
-    info.textContent = (candidate.provider || data.provider) === 'google'
-      ? `Google Images${candidate.creator ? ` · ${candidate.creator}` : ''}`
-      : `${candidate.creator || 'автор не указан'} · ${candidate.license || 'лицензия не указана'}`;
-    const choose = document.createElement('button');
-    choose.className = 'button primary';
-    choose.textContent = 'Выбрать';
-    choose.addEventListener('click', () => selectCandidate(context, data, candidate, choose));
-    meta.append(title, info, choose);
-    card.append(image, meta);
-    elements.candidates.append(card);
-  }
+function updateBrowserSearchLinks(item) {
+  const query = (elements.imageQuery.value || item?.query || item?.ru || item?.ro || '').trim();
+  const encoded = encodeURIComponent(query);
+  $('#openGoogleImages').href = `https://www.google.com/search?tbm=isch&q=${encoded}`;
+  $('#openBingImages').href = `https://www.bing.com/images/search?q=${encoded}`;
+  $('#openOpenverse').href = `https://openverse.org/search/image?q=${encoded}`;
+  elements.dialogQuery.textContent = query ? `Запрос: ${query}` : 'Добавьте идею образа выше.';
 }
 
-async function searchCurrentImage() {
+function saveCurrentImageHint(showConfirmation = true) {
   const context = currentDialogContext();
   if (!context) return;
-  updatePhraseQuery(context.index, elements.imageQuery.value);
-  const snapshot = {...context.item};
-  elements.candidates.textContent = 'Ищу изображения…';
-  setImageStatus('Ищу подходящие изображения…');
-  try {
-    const data = await api('/api/image/search', {
-      method: 'POST',
-      body: JSON.stringify({...imagePayload(snapshot), provider: elements.provider.value || 'auto'}),
-    });
-    const live = currentDialogContext();
-    if (!live || phraseKey(live.item) !== phraseKey(snapshot)) return;
-    if (!live.item.query && data.query) updatePhraseQuery(live.index, data.query);
-    renderCandidates(live, data);
-    setImageStatus(data.results.length ? `Найдено: ${data.results.length}` : 'Ничего не найдено.', !data.results.length);
-  } catch (error) {
-    elements.candidates.textContent = error.message;
-    setImageStatus(error.message, true);
-  }
+  const hint = elements.imageQuery.value.trim();
+  updatePhraseQuery(context.index, hint);
+  updateBrowserSearchLinks(context.item);
+  if (showConfirmation) setImageStatus('Идея образа сохранена.');
 }
 
 async function openImageManager() {
   const item = state.sentences[state.currentIndex];
   if (!item) return;
   state.dialogIndex = state.currentIndex;
-  state.dialogSearch = null;
   elements.dialogPhrase.textContent = `${item.ro}${item.ru ? ` — ${item.ru}` : ''}`;
+  elements.imageQuery.value = item.query || item.ru || item.ro;
   elements.urlInput.value = '';
-  elements.candidates.textContent = 'Поиск ещё не выполнен.';
+  setImageStatus();
+  updateBrowserSearchLinks(item);
+  elements.generateImage.disabled = !state.cloudflareConfigured;
+  elements.generatorInfo.textContent = state.cloudflareConfigured
+    ? 'Готово к генерации. Результат будет приведён к 300 × 300 и сохранён локально.'
+    : 'Для генерации укажите CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в файле .env.';
   if (!elements.dialog.open) elements.dialog.showModal();
-  await searchCurrentImage();
 }
 
-async function selectCandidate(context, searchData, candidate, button) {
+async function generateCurrentImage() {
+  const context = currentDialogContext();
+  if (!context) return;
+  if (!state.cloudflareConfigured) {
+    setImageStatus('Cloudflare Workers AI не настроен. Ссылки поиска и ручная загрузка доступны ниже.', true);
+    return;
+  }
+  if (!elements.imageQuery.value.trim()) {
+    setImageStatus('Укажите идею образа.', true);
+    elements.imageQuery.focus();
+    return;
+  }
+  saveCurrentImageHint(false);
   const snapshot = {...context.item};
-  button.disabled = true;
-  setImageStatus('Сохраняю выбранное изображение…');
+  elements.generateImage.disabled = true;
+  setImageStatus('FLUX создаёт ассоциацию… Обычно это занимает несколько секунд.');
   try {
-    const data = await api('/api/image/select', {
+    const data = await api('/api/image/generate', {
       method: 'POST',
-      body: JSON.stringify({...imagePayload(snapshot), token: searchData.token, candidate_id: candidate.id}),
+      body: JSON.stringify(imagePayload(snapshot)),
     });
     rememberImage(snapshot, data.image);
     renderAll();
-    setImageStatus('Изображение сохранено локально.');
+    setImageStatus('Ассоциация сгенерирована и сохранена локально.');
     if (elements.dialog.open) elements.dialog.close();
   } catch (error) {
     setImageStatus(error.message, true);
-    button.disabled = false;
+  } finally {
+    elements.generateImage.disabled = !state.cloudflareConfigured;
   }
 }
 
@@ -762,13 +744,17 @@ async function autoFindMissing() {
   const button = $('#autoFindMissing');
   if (state.batchActive) {
     state.cancelBatch = true;
-    setImageStatus('Остановлю подбор после текущего изображения.');
+    setBatchImageStatus('Остановлю генерацию после текущего изображения.');
+    return;
+  }
+  if (!state.cloudflareConfigured) {
+    setBatchImageStatus('Cloudflare Workers AI не настроен.', true);
     return;
   }
   const unique = [...new Map(state.sentences.map(item => [phraseKey(item), {...item}])).values()];
   state.batchActive = true;
   state.cancelBatch = false;
-  button.textContent = 'Остановить подбор';
+  button.textContent = 'Остановить генерацию';
   button.disabled = false;
   let added = 0;
   let skipped = 0;
@@ -779,28 +765,22 @@ async function autoFindMissing() {
       if (stored) {
         skipped += 1;
       } else {
-        setImageStatus(`Подбираю изображения: ${index + 1} / ${unique.length}`);
-        const search = await api('/api/image/search', {
-          method: 'POST', body: JSON.stringify({...imagePayload(item), provider: elements.provider.value || 'auto'}),
+        setBatchImageStatus(`Генерирую ассоциации: ${index + 1} / ${unique.length}`);
+        const generated = await api('/api/image/generate', {
+          method: 'POST', body: JSON.stringify(imagePayload(item)),
         });
-        if (search.results.length) {
-          const selected = await api('/api/image/select', {
-            method: 'POST',
-            body: JSON.stringify({...imagePayload(item), token: search.token, candidate_id: search.results[0].id}),
-          });
-          rememberImage(item, selected.image);
-          added += 1;
-          renderAll();
-        }
+        rememberImage(item, generated.image);
+        added += 1;
+        renderAll();
       }
       elements.imageProgress.style.width = `${Math.round(((index + 1) / unique.length) * 100)}%`;
     }
-    setImageStatus(`Добавлено: ${added}. Уже было: ${skipped}.${state.cancelBatch ? ' Подбор остановлен.' : ''}`);
+    setBatchImageStatus(`Сгенерировано: ${added}. Уже было: ${skipped}.${state.cancelBatch ? ' Генерация остановлена.' : ''}`);
   } catch (error) {
-    setImageStatus(`${error.message} Подбор остановлен.`, true);
+    setBatchImageStatus(`${error.message} Генерация остановлена.`, true);
   } finally {
     state.batchActive = false;
-    button.textContent = 'Автоподобрать недостающие';
+    button.textContent = 'Сгенерировать недостающие';
     updateControls();
     setTimeout(() => { elements.imageProgress.style.width = '0%'; }, 1200);
   }
@@ -840,17 +820,14 @@ async function initialize() {
   const status = await api('/api/status');
   state.defaults = status.defaults || [];
   state.maxImageBytes = status.image?.max_bytes || state.maxImageBytes;
-  state.googleConfigured = Boolean(status.image?.google?.configured);
-  const googleOption = $('option[value="google"]', elements.provider);
-  if (googleOption) {
-    googleOption.disabled = !state.googleConfigured;
-    googleOption.textContent = state.googleConfigured ? 'Google Images API' : 'Google Images API (не настроен)';
-  }
-  const savedProvider = elements.provider.dataset.savedProvider;
-  elements.provider.value = savedProvider === 'google' && !state.googleConfigured ? 'auto' : savedProvider;
-  elements.imageInfo.textContent = state.googleConfigured
-    ? 'Google Images доступен внутри приложения; также работают Openverse, буфер, файл и URL.'
-    : 'Openverse работает без ключа. Google Images открывается отдельно; найденное фото можно вставить, выбрать с диска или загрузить по URL.';
+  state.cloudflareConfigured = Boolean(status.image?.cloudflare?.configured);
+  elements.generateImage.disabled = !state.cloudflareConfigured;
+  elements.imageInfo.textContent = state.cloudflareConfigured
+    ? 'FLUX.1 Schnell готов. Можно сгенерировать все отсутствующие ассоциации автоматически.'
+    : 'Генерация отключена до настройки Cloudflare. Ручная загрузка и ссылки поиска в браузере работают без неё.';
+  elements.generatorInfo.textContent = state.cloudflareConfigured
+    ? 'Готово к генерации изображений 300 × 300.'
+    : 'Добавьте CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в файл .env.';
   const defaultText = serializeLines(state.defaults.map(([ro, ru, query]) => ({ro, ru, query: query || ''})));
   elements.input.value = saved && Object.prototype.hasOwnProperty.call(saved, 'rawText') && saved.rawText !== undefined ? saved.rawText : defaultText;
   state.sentences = parseLines(elements.input.value);
@@ -890,22 +867,15 @@ elements.recall.addEventListener('change', () => {
 elements.reveal.addEventListener('click', () => { state.revealed = true; renderCurrent(); });
 elements.hideTranslation.addEventListener('change', () => { persist(); renderAll(); });
 
-$('#saveImageQuery').addEventListener('click', () => {
-  updatePhraseQuery(state.currentIndex, elements.imageQuery.value);
-  setImageStatus('Поисковый запрос сохранён.');
-});
-$('#manageImage').addEventListener('click', openImageManager);
-elements.manageImageQuick.addEventListener('click', openImageManager);
+$('#saveImageQuery').addEventListener('click', () => saveCurrentImageHint());
+elements.manageImage.addEventListener('click', openImageManager);
+elements.generateImage.addEventListener('click', generateCurrentImage);
 $('#deleteCurrentImage').addEventListener('click', () => deleteImage());
 $('#autoFindMissing').addEventListener('click', autoFindMissing);
 $('#closeDialog').addEventListener('click', () => elements.dialog.close());
-$('#refreshSearch').addEventListener('click', searchCurrentImage);
-elements.provider.addEventListener('change', () => { persist(); if (elements.dialog.open) searchCurrentImage(); });
-$('#openGoogleImages').addEventListener('click', () => {
+elements.imageQuery.addEventListener('input', () => {
   const context = currentDialogContext();
-  if (!context) return;
-  const query = context.item.query || context.item.ru || context.item.ro;
-  window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(query)}`, '_blank', 'noopener,noreferrer');
+  if (context) updateBrowserSearchLinks(context.item);
 });
 
 $('#chooseImageFile').addEventListener('click', () => elements.fileInput.click());

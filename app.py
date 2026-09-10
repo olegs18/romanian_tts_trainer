@@ -19,10 +19,10 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -55,11 +55,14 @@ HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 MAX_IMAGE_BYTES = 12 * 1024 * 1024
 MAX_BODY_BYTES = 18 * 1024 * 1024
-OPENVERSE_ENDPOINT = "https://api.openverse.org/v1/images/"
-GOOGLE_CSE_ENDPOINT = "https://customsearch.googleapis.com/customsearch/v1"
-GOOGLE_CSE_API_KEY = os.environ.get("GOOGLE_CSE_API_KEY", "").strip()
-GOOGLE_CSE_ID = os.environ.get("GOOGLE_CSE_ID", "").strip()
-USER_AGENT = "RomanianTTSTrainer/2.0 (local language-learning app)"
+CLOUDFLARE_ACCOUNT_ID = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "").strip()
+CLOUDFLARE_API_TOKEN = os.environ.get("CLOUDFLARE_API_TOKEN", "").strip()
+CLOUDFLARE_IMAGE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+CLOUDFLARE_IMAGE_STEPS = 4
+CLOUDFLARE_RESPONSE_LIMIT = 24 * 1024 * 1024
+GENERATED_IMAGE_SIZE = 300
+CLOUDFLARE_MODEL_URL = "https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/"
+USER_AGENT = "RomanianTTSTrainer/2.1 (local language-learning app)"
 
 DEFAULT_PHRASES = [
     ["Bună ziua.", "Добрый день.", "people greeting hello daytime"],
@@ -91,8 +94,6 @@ ALLOWED_IMAGE_TYPES = {
 }
 
 CACHE_LOCK = threading.Lock()
-SEARCH_LOCK = threading.Lock()
-SEARCH_SESSIONS: dict[str, dict[str, dict[str, Any]]] = {}
 
 
 def stable_hash(*parts: str) -> str:
@@ -123,13 +124,27 @@ def clean_text(value: Any, max_length: int) -> str:
 
 
 def default_image_query(text: str, translation: str, explicit_query: str = "") -> str:
-    """Build a conservative fallback query when the user did not provide one."""
+    """Return the visual idea supplied by the lesson or a useful fallback."""
     if explicit_query.strip():
         return explicit_query.strip()[:300]
     for ro, _ru, query in DEFAULT_PHRASES:
         if text.strip() == ro:
             return query
     return (translation or text).strip()[:300]
+
+
+def mnemonic_image_prompt(text: str, translation: str, visual_hint: str) -> str:
+    """Turn a short lesson hint into a vivid, text-free mnemonic image prompt."""
+    meaning = clean_text(translation, 700) or clean_text(text, 500)
+    hint = default_image_query(text, translation, visual_hint)
+    return (
+        "Create a vivid surreal mnemonic photograph for memorizing a Romanian expression. "
+        f"Meaning of the expression: {meaning}. Visual association: {hint}. "
+        "Show one instantly understandable scene with one dominant action, exaggerated scale, "
+        "strong emotion and a memorable unexpected object. The association matters more than "
+        "physical realism. Square composition, centered subject, clean background, high contrast, "
+        "photorealistic lighting. No letters, words, captions, subtitles, logos or watermarks."
+    )[:2048]
 
 
 class AudioService:
@@ -221,12 +236,11 @@ class VoiceService:
 
 
 class WebImageService:
-    """Search Openverse and store one active image per Romanian phrase."""
+    """Generate or import one active image per Romanian phrase."""
 
-    def __init__(self, cache_dir: Path = IMAGE_CACHE_DIR, endpoint: str = OPENVERSE_ENDPOINT):
+    def __init__(self, cache_dir: Path = IMAGE_CACHE_DIR):
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.endpoint = endpoint
 
     def phrase_key(self, text: str) -> str:
         return stable_hash("phrase-image-v2", text.strip())
@@ -242,132 +256,153 @@ class WebImageService:
     def legacy_manifest_path(self, text: str, translation: str, query: str) -> Path:
         return self.cache_dir / f"{self.key(text, translation, query)}.json"
 
-    def _request_json(self, url: str) -> dict[str, Any]:
-        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            body = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Openverse: HTTP {exc.code}: {body[:300]}") from exc
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Не удалось подключиться к Openverse: {exc.reason}") from exc
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("Openverse вернул некорректный JSON") from exc
-        if not isinstance(parsed, dict):
-            raise RuntimeError("Openverse вернул неожиданный ответ")
-        return parsed
-
-    @staticmethod
-    def _candidate(item: dict[str, Any]) -> dict[str, Any] | None:
-        candidate_id = clean_text(item.get("id"), 200)
-        thumbnail = clean_text(item.get("thumbnail"), 2000)
-        original_url = clean_text(item.get("url"), 2000)
-        preview_url = thumbnail or original_url
-        if not candidate_id or not preview_url:
-            return None
-        return {
-            "id": candidate_id,
-            "title": clean_text(item.get("title"), 500) or "Без названия",
-            "creator": clean_text(item.get("creator"), 500) or "Не указан",
-            "creator_url": clean_text(item.get("creator_url"), 2000),
-            "license": clean_text(item.get("license"), 100) or "unknown",
-            "license_version": clean_text(item.get("license_version"), 100),
-            "license_url": clean_text(item.get("license_url"), 2000),
-            "source": clean_text(item.get("source"), 100),
-            "source_url": clean_text(item.get("foreign_landing_url"), 2000),
-            "thumbnail": preview_url,
-            "original_url": original_url,
-            "provider": "openverse",
-        }
-
-    @staticmethod
-    def _google_candidate(item: dict[str, Any]) -> dict[str, Any] | None:
-        image = item.get("image") if isinstance(item.get("image"), dict) else {}
-        original_url = clean_text(item.get("link"), 4000)
-        thumbnail = clean_text(image.get("thumbnailLink"), 4000)
-        if not original_url and not thumbnail:
-            return None
-        context_url = clean_text(image.get("contextLink"), 4000)
-        title = clean_text(item.get("title"), 500) or "Без названия"
-        display_link = clean_text(item.get("displayLink"), 500)
-        return {
-            "id": stable_hash("google-image", original_url or thumbnail),
-            "title": title,
-            "creator": display_link,
-            "creator_url": context_url,
-            "license": "",
-            "license_version": "",
-            "license_url": "",
-            "source": "google",
-            "source_url": context_url,
-            "thumbnail": thumbnail or original_url,
-            "original_url": original_url or thumbnail,
-            "provider": "google",
-        }
+    @property
+    def cloudflare_configured(self) -> bool:
+        return bool(CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN)
 
     @property
-    def google_configured(self) -> bool:
-        return bool(GOOGLE_CSE_API_KEY and GOOGLE_CSE_ID)
+    def cloudflare_endpoint(self) -> str:
+        account_id = urllib.parse.quote(CLOUDFLARE_ACCOUNT_ID, safe="")
+        model = urllib.parse.quote(CLOUDFLARE_IMAGE_MODEL, safe="@/-._")
+        return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
 
-    def search_openverse(self, query: str, count: int = 12) -> list[dict[str, Any]]:
-        query = clean_text(query, 300)
-        if not query:
-            raise ValueError("Пустой поисковый запрос для картинки")
-        count = max(1, min(20, count))
-        params = urllib.parse.urlencode({"q": query, "page_size": count})
-        payload = self._request_json(f"{self.endpoint}?{params}")
-        results = payload.get("results")
-        if not isinstance(results, list):
-            raise RuntimeError("Openverse не вернул список изображений")
-        candidates = []
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            candidate = self._candidate(item)
-            if candidate:
-                candidates.append(candidate)
-        return candidates
+    @staticmethod
+    def _cloudflare_error(payload: Any) -> str:
+        if isinstance(payload, dict):
+            errors = payload.get("errors")
+            if isinstance(errors, list):
+                messages = [clean_text(item.get("message"), 400) for item in errors if isinstance(item, dict)]
+                messages = [message for message in messages if message]
+                if messages:
+                    return "; ".join(messages)
+            message = clean_text(payload.get("message"), 400)
+            if message:
+                return message
+        return "Cloudflare вернул ошибку без пояснения"
 
-    def search_google(self, query: str, count: int = 10) -> list[dict[str, Any]]:
-        if not self.google_configured:
-            raise ValueError("Google Images API не настроен: нужны GOOGLE_CSE_API_KEY и GOOGLE_CSE_ID")
-        count = max(1, min(10, count))
-        params = urllib.parse.urlencode({
-            "key": GOOGLE_CSE_API_KEY,
-            "cx": GOOGLE_CSE_ID,
-            "q": query,
-            "searchType": "image",
-            "num": count,
-            "safe": "active",
-        })
-        payload = self._request_json(f"{GOOGLE_CSE_ENDPOINT}?{params}")
-        items = payload.get("items", [])
-        if not isinstance(items, list):
-            raise RuntimeError("Google Custom Search не вернул список изображений")
-        candidates = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            candidate = self._google_candidate(item)
-            if candidate:
-                candidates.append(candidate)
-        return candidates
+    @staticmethod
+    def _extract_cloudflare_image(payload: Any) -> bytes:
+        if not isinstance(payload, dict):
+            raise RuntimeError("Cloudflare Workers AI вернул неожиданный ответ")
+        if payload.get("success") is False:
+            raise RuntimeError(f"Cloudflare Workers AI: {WebImageService._cloudflare_error(payload)}")
 
-    def search(self, query: str, count: int = 12, provider: str = "auto") -> tuple[list[dict[str, Any]], str]:
-        query = clean_text(query, 300)
-        if not query:
-            raise ValueError("Пустой поисковый запрос для картинки")
-        provider = clean_text(provider, 30).lower() or "auto"
-        if provider == "auto":
-            provider = "google" if self.google_configured else "openverse"
-        if provider == "google":
-            return self.search_google(query, min(count, 10)), "google"
-        if provider == "openverse":
-            return self.search_openverse(query, count), "openverse"
-        raise ValueError("Неизвестный поисковый провайдер")
+        result = payload.get("result", payload)
+        encoded: Any = result.get("image") if isinstance(result, dict) else result
+        if not isinstance(encoded, str) or not encoded.strip():
+            raise RuntimeError("Cloudflare Workers AI не вернул изображение")
+        encoded = encoded.strip()
+        if encoded.startswith("data:"):
+            comma = encoded.find(",")
+            encoded = encoded[comma + 1:] if comma >= 0 else ""
+        encoded = re.sub(r"\s+", "", encoded)
+        try:
+            image_bytes = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise RuntimeError("Cloudflare Workers AI вернул повреждённое изображение") from exc
+        if not image_bytes or len(image_bytes) > MAX_IMAGE_BYTES:
+            raise RuntimeError("Cloudflare Workers AI вернул пустое или слишком большое изображение")
+        return image_bytes
+
+    @staticmethod
+    def _detect_image_type(data: bytes) -> tuple[str, str]:
+        if data.startswith(b"\xff\xd8\xff"):
+            return "image/jpeg", ".jpg"
+        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return "image/png", ".png"
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return "image/gif", ".gif"
+        if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            return "image/webp", ".webp"
+        raise RuntimeError("Cloudflare Workers AI вернул файл неизвестного формата")
+
+    def _request_cloudflare_image(self, prompt: str) -> bytes:
+        if not self.cloudflare_configured:
+            raise ValueError(
+                "Генерация не настроена: добавьте CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в файл .env"
+            )
+        body = json.dumps({"prompt": prompt, "steps": CLOUDFLARE_IMAGE_STEPS}).encode("utf-8")
+        request = urllib.request.Request(
+            self.cloudflare_endpoint,
+            data=body,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+                "Content-Type": "application/json",
+                "Accept": "application/json, image/*",
+                "User-Agent": USER_AGENT,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                content_type = response.headers.get_content_type().lower()
+                raw = response.read(CLOUDFLARE_RESPONSE_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            raw_error = exc.read(8192)
+            try:
+                payload = json.loads(raw_error)
+                message = self._cloudflare_error(payload)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                message = raw_error.decode("utf-8", errors="replace").strip()[:400] or exc.reason
+            raise RuntimeError(f"Cloudflare Workers AI: HTTP {exc.code}: {message}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Не удалось подключиться к Cloudflare Workers AI: {exc.reason}") from exc
+
+        if len(raw) > CLOUDFLARE_RESPONSE_LIMIT:
+            raise RuntimeError("Ответ Cloudflare Workers AI слишком большой")
+        if content_type in ALLOWED_IMAGE_TYPES:
+            image_bytes = raw
+        else:
+            try:
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise RuntimeError("Cloudflare Workers AI вернул некорректный ответ") from exc
+            image_bytes = self._extract_cloudflare_image(payload)
+        self._detect_image_type(image_bytes)
+        return image_bytes
+
+    @staticmethod
+    def _resize_generated_image(image_bytes: bytes) -> bytes:
+        try:
+            from PIL import Image, ImageOps, UnidentifiedImageError
+        except ImportError as exc:
+            raise RuntimeError("Не установлен Pillow. Выполните: pip install -r requirements.txt") from exc
+        try:
+            with Image.open(BytesIO(image_bytes)) as source:
+                source.load()
+                if source.width * source.height > 32_000_000:
+                    raise RuntimeError("Сгенерированное изображение слишком большое")
+                normalized = ImageOps.exif_transpose(source).convert("RGB")
+                card = ImageOps.fit(
+                    normalized,
+                    (GENERATED_IMAGE_SIZE, GENERATED_IMAGE_SIZE),
+                    method=Image.Resampling.LANCZOS,
+                )
+                output = BytesIO()
+                card.save(output, format="JPEG", quality=88, optimize=True)
+                return output.getvalue()
+        except (UnidentifiedImageError, OSError) as exc:
+            raise RuntimeError("Cloudflare Workers AI вернул повреждённое изображение") from exc
+
+    def generate(self, text: str, translation: str, visual_hint: str) -> dict[str, Any]:
+        visual_hint = default_image_query(text, translation, visual_hint)
+        prompt = mnemonic_image_prompt(text, translation, visual_hint)
+        generated = self._request_cloudflare_image(prompt)
+        image_bytes = self._resize_generated_image(generated)
+        return self._store(
+            text,
+            image_bytes,
+            ".jpg",
+            {
+                "source_type": "cloudflare",
+                "title": visual_hint,
+                "source": "Cloudflare Workers AI",
+                "source_url": CLOUDFLARE_MODEL_URL,
+                "query": visual_hint,
+                "prompt": prompt,
+                "model": CLOUDFLARE_IMAGE_MODEL,
+            },
+        )
 
     @staticmethod
     def _validate_remote_url(url: str) -> None:
@@ -511,48 +546,14 @@ class WebImageService:
                 "source_url": clean_text(metadata.get("source_url"), 2000),
                 "original_filename": clean_text(metadata.get("original_filename"), 500),
                 "query": clean_text(metadata.get("query"), 300),
+                "prompt": clean_text(metadata.get("prompt"), 2048),
+                "model": clean_text(metadata.get("model"), 200),
             }
             self.manifest_path(text).write_text(
                 json.dumps(stored, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
         return self.lookup(text, "", "") or {}
-
-    def select(self, text: str, translation: str, query: str, candidate: dict[str, Any]) -> dict[str, Any]:
-        del translation
-        urls = []
-        for value in (candidate.get("original_url"), candidate.get("thumbnail")):
-            url = clean_text(value, 4000)
-            if url and url not in urls:
-                urls.append(url)
-        if not urls:
-            raise RuntimeError("У выбранного результата нет URL изображения")
-        last_error = None
-        for image_url in urls:
-            try:
-                image_bytes, extension, _final_url = self._download_image(image_url)
-                break
-            except RuntimeError as exc:
-                last_error = exc
-        else:
-            raise last_error or RuntimeError("Не удалось скачать выбранное изображение")
-        return self._store(
-            text,
-            image_bytes,
-            extension,
-            {
-                "source_type": clean_text(candidate.get("provider"), 30) or "openverse",
-                "title": candidate.get("title"),
-                "creator": candidate.get("creator"),
-                "creator_url": candidate.get("creator_url"),
-                "license": candidate.get("license"),
-                "license_version": candidate.get("license_version"),
-                "license_url": candidate.get("license_url"),
-                "source": candidate.get("source"),
-                "source_url": candidate.get("source_url"),
-                "query": query,
-            },
-        )
 
     def import_data_url(
         self,
@@ -603,7 +604,7 @@ class WebImageService:
         if not target.exists() or target.stat().st_size <= 0:
             return None
         result = dict(metadata)
-        result.setdefault("source_type", "openverse")
+        result.setdefault("source_type", "legacy")
         result.setdefault("version", str(target.stat().st_mtime_ns))
         result["url"] = f"/cache/images/{filename}"
         return result
@@ -625,7 +626,7 @@ class WebImageService:
             return None
         extension = legacy_path.suffix.lower()
         migrated = dict(legacy)
-        migrated["source_type"] = migrated.get("source_type") or "openverse"
+        migrated["source_type"] = migrated.get("source_type") or "legacy"
         migrated["query"] = migrated.get("query") or query
         return self._store(text, data, extension, migrated)
 
@@ -657,23 +658,8 @@ VOICE_SERVICE = VoiceService()
 IMAGE_SERVICE = WebImageService()
 
 
-def remember_search(candidates: list[dict[str, Any]]) -> str:
-    token = uuid.uuid4().hex
-    with SEARCH_LOCK:
-        if len(SEARCH_SESSIONS) >= 100:
-            oldest = next(iter(SEARCH_SESSIONS))
-            SEARCH_SESSIONS.pop(oldest, None)
-        SEARCH_SESSIONS[token] = {candidate["id"]: candidate for candidate in candidates}
-    return token
-
-
-def get_search_candidate(token: str, candidate_id: str) -> dict[str, Any] | None:
-    with SEARCH_LOCK:
-        return SEARCH_SESSIONS.get(token, {}).get(candidate_id)
-
-
 class TrainerHandler(BaseHTTPRequestHandler):
-    server_version = "RomanianTTSTrainer/2.0"
+    server_version = "RomanianTTSTrainer/2.1"
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
@@ -734,11 +720,15 @@ class TrainerHandler(BaseHTTPRequestHandler):
             self._json({
                 "ok": True,
                 "image": {
-                    "provider": "Google Images (optional) + Openverse + manual import",
-                    "configured": True,
-                    "requires_key": False,
+                    "provider": "Cloudflare Workers AI + manual import",
+                    "configured": IMAGE_SERVICE.cloudflare_configured,
+                    "requires_key": True,
                     "max_bytes": MAX_IMAGE_BYTES,
-                    "google": {"configured": IMAGE_SERVICE.google_configured},
+                    "cloudflare": {
+                        "configured": IMAGE_SERVICE.cloudflare_configured,
+                        "model": CLOUDFLARE_IMAGE_MODEL,
+                        "output_size": GENERATED_IMAGE_SIZE,
+                    },
                 },
                 "defaults": DEFAULT_PHRASES,
             })
@@ -772,10 +762,8 @@ class TrainerHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             if path == "/api/audio":
                 self._handle_audio(data)
-            elif path == "/api/image/search":
-                self._handle_image_search(data)
-            elif path == "/api/image/select":
-                self._handle_image_select(data)
+            elif path == "/api/image/generate":
+                self._handle_image_generate(data)
             elif path == "/api/image/lookup":
                 self._handle_image_lookup(data)
             elif path == "/api/image/import":
@@ -811,22 +799,10 @@ class TrainerHandler(BaseHTTPRequestHandler):
             raise ValueError("Пустая фраза")
         return text, translation, default_image_query(text, translation, explicit_query)
 
-    def _handle_image_search(self, data: dict[str, Any]) -> None:
-        _text, _translation, query = self._image_args(data)
-        provider = clean_text(data.get("provider"), 30) or "auto"
-        candidates, resolved_provider = IMAGE_SERVICE.search(query, 12, provider)
-        token = remember_search(candidates)
-        self._json({"ok": True, "query": query, "provider": resolved_provider, "token": token, "results": candidates})
-
-    def _handle_image_select(self, data: dict[str, Any]) -> None:
+    def _handle_image_generate(self, data: dict[str, Any]) -> None:
         text, translation, query = self._image_args(data)
-        token = clean_text(data.get("token"), 100)
-        candidate_id = clean_text(data.get("candidate_id"), 200)
-        candidate = get_search_candidate(token, candidate_id)
-        if not candidate:
-            raise ValueError("Результат поиска устарел. Выполните поиск картинки ещё раз.")
-        selected = IMAGE_SERVICE.select(text, translation, query, candidate)
-        self._json({"ok": True, "image": selected})
+        selected = IMAGE_SERVICE.generate(text, translation, query)
+        self._json({"ok": True, "query": query, "image": selected})
 
     def _handle_image_lookup(self, data: dict[str, Any]) -> None:
         text, translation, query = self._image_args(data)

@@ -30,7 +30,7 @@ async function until(predicate) {
   }
 }
 
-async function launch({saved = null} = {}) {
+async function launch({saved = null, cloudflareConfigured = true} = {}) {
   const dom = new JSDOM(fs.readFileSync(path.join(root, "static/index.html"), "utf8"), {
     url: "http://localhost:8765",
     runScripts: "outside-only",
@@ -59,23 +59,20 @@ async function launch({saved = null} = {}) {
   w.fetch = async (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
     requests.push({url, body});
-    if (url === "/api/status") return response({ok: true, defaults, image: {max_bytes: 12 * 1024 * 1024, google: {configured: false}}});
+    if (url === "/api/status") return response({ok: true, defaults, image: {max_bytes: 12 * 1024 * 1024, cloudflare: {configured: cloudflareConfigured, model: "@cf/black-forest-labs/flux-1-schnell", output_size: 300}}});
     if (url === "/api/voices") return response({ok: true, warning: null, voices: [{ShortName: "ro-RO-AlinaNeural", Gender: "Female"}]});
     if (url === "/api/image/lookup") {
       return response({ok: true, found: body.text === defaults[0][0], query: body.query, image: body.text === defaults[0][0] ? cachedImage : null});
     }
     if (url === "/api/audio") return response({ok: true, cached: true, url: "/cache/audio/" + encodeURIComponent(body.text) + ".mp3"});
-    if (url === "/api/image/search") {
-      return response({ok: true, query: body.query || "found association", provider: "openverse", token: "search-token", results: [{id: "candidate", title: "Memorable image", creator: "Author", license: "by", thumbnail: "https://example.org/thumb.jpg"}]});
-    }
-    if (url === "/api/image/select") return response({ok: true, image: {...cachedImage, version: "selected-version", source_type: "openverse", creator: "Author"}});
+    if (url === "/api/image/generate") return response({ok: true, query: body.query, image: {...cachedImage, version: "generated-version", source_type: "cloudflare"}});
     if (url === "/api/image/import") return response({ok: true, image: {...cachedImage, version: "imported-version", source_type: body.mode, source_url: body.source_url || ""}});
     if (url === "/api/image/delete") return response({ok: true, deleted: true});
     throw new Error("Unexpected request " + url);
   };
 
   w.eval(fs.readFileSync(path.join(root, "static/app.js"), "utf8"));
-  await until(() => q("#connectionBadge").textContent === "EDGE TTS ПОДКЛЮЧЁН" && q("#imageInfo").textContent.includes("Openverse"));
+  await until(() => q("#connectionBadge").textContent === "EDGE TTS ПОДКЛЮЧЁН" && !q("#imageInfo").textContent.includes("Проверяю"));
   return {dom, w, q, requests, played};
 }
 
@@ -99,16 +96,16 @@ test("interface has one large study card and a compact playlist", async () => {
     assert.match(app.q("#currentImage").getAttribute("src"), /version-one$/);
     assert.equal(app.q("#currentImage").hidden, false);
     assert.equal(app.q("#imagePlaceholder").hidden, true);
-    assert.equal(app.q("#manageImageQuick").textContent.trim(), "Заменить изображение");
-    assert.equal(app.q("#manageImageQuick").disabled, false);
+    assert.equal(app.q("#manageImageLabel").textContent, "Заменить изображение");
+    assert.match(fs.readFileSync(path.join(root, "static/style.css"), "utf8"), /\.image-manage-overlay[^}]*opacity:\s*0/);
   } finally { app.dom.window.close(); }
 });
 
-test("image action appears on picture hover, keyboard focus and touch screens", () => {
+test("image action appears only on picture interaction and remains usable on touch screens", () => {
   const css = fs.readFileSync(path.join(root, "static/style.css"), "utf8");
-  assert.match(css, /\.picture-frame \.image-quick-action \{[^}]*opacity: 0;[^}]*pointer-events: none;/s);
-  assert.match(css, /\.picture-frame:hover \.image-quick-action,[\s\S]*\.picture-frame:focus-within \.image-quick-action \{[^}]*opacity: 1;/);
-  assert.match(css, /@media \(hover: none\), \(pointer: coarse\) \{[\s\S]*\.picture-frame \.image-quick-action \{[^}]*opacity: 1;/);
+  assert.match(css, /\.image-manage-overlay \{[^}]*opacity: 0;[^}]*pointer-events: none;/s);
+  assert.match(css, /\.picture-frame:hover \.image-manage-overlay,[\s\S]*\.picture-frame:focus-within \.image-manage-overlay \{[^}]*opacity: 1;[^}]*pointer-events: auto;/);
+  assert.match(css, /@media \(hover: none\) \{[\s\S]*\.image-manage-overlay \{[^}]*opacity: \.92;[^}]*pointer-events: auto;/);
 });
 
 test("playlist playback swaps the large card without scrolling the page", async () => {
@@ -133,8 +130,6 @@ test("recall mode hides every textual answer and plays only the selected card", 
     assert.equal(app.q("#currentTranslation").hidden, true);
     assert.equal(app.q("#editorSection").hidden, true);
     assert.equal(app.q("#imageOptions").hidden, true);
-    assert.equal(app.q("#manageImageQuick").hidden, false);
-    assert.equal(app.q("#manageImageQuick").disabled, false);
     assert.equal(app.q(".sentence-main strong").textContent, "Карточка 1");
     app.q("#revealButton").click();
     assert.equal(app.q("#currentSentence").hidden, false);
@@ -147,18 +142,21 @@ test("recall mode hides every textual answer and plays only the selected card", 
   } finally { app.dom.window.close(); }
 });
 
-test("image manager searches and attaches a selected result to the current card", async () => {
+test("image manager generates and attaches a Cloudflare association", async () => {
   const app = await launch();
   try {
     app.q("#nextButton").click();
-    assert.equal(app.q("#manageImageQuick").textContent.trim(), "Прикрепить изображение");
-    app.q("#manageImageQuick").click();
-    await until(() => app.q("#candidateGrid button"));
+    app.q("#manageImage").click();
     assert.equal(app.q("#imageDialog").open, true);
-    app.q("#candidateGrid button").click();
+    assert.equal(app.requests.filter(item => item.url === "/api/image/generate").length, 0);
+    assert.match(app.q("#openGoogleImages").href, /google\.com\/search/);
+    assert.match(app.q("#openBingImages").href, /bing\.com\/images\/search/);
+    assert.match(app.q("#openOpenverse").href, /openverse\.org\/search\/image/);
+    app.q("#generateImage").click();
     await until(() => app.q("#imageDialog").open === false && !app.q("#currentImage").hidden);
-    assert.match(app.q("#currentImage").getAttribute("src"), /selected-version$/);
-    assert.equal(app.requests.filter(item => item.url === "/api/image/select").length, 1);
+    assert.match(app.q("#currentImage").getAttribute("src"), /generated-version$/);
+    assert.equal(app.requests.filter(item => item.url === "/api/image/generate").length, 1);
+    assert.equal(app.q("#manageImageLabel").textContent, "Заменить изображение");
   } finally { app.dom.window.close(); }
 });
 
@@ -167,7 +165,6 @@ test("image manager accepts clipboard images and direct URLs", async () => {
   try {
     app.q("#nextButton").click();
     app.q("#manageImage").click();
-    await until(() => app.q("#imageDialog").open);
     const file = new app.w.File([new Uint8Array([137, 80, 78, 71])], "memory.png", {type: "image/png"});
     const paste = new app.w.Event("paste", {bubbles: true, cancelable: true});
     Object.defineProperty(paste, "clipboardData", {value: {items: [{kind: "file", type: "image/png", getAsFile: () => file}]}});
@@ -176,12 +173,24 @@ test("image manager accepts clipboard images and direct URLs", async () => {
     assert.match(app.requests.find(item => item.url === "/api/image/import" && item.body.mode === "clipboard").body.data_url, /^data:image\/png;base64,/);
 
     app.q("#manageImage").click();
-    await until(() => app.q("#imageDialog").open);
     app.q("#imageUrlInput").value = "https://example.org/image.png";
     app.q("#importImageUrl").click();
     await until(() => app.requests.some(item => item.url === "/api/image/import" && item.body.mode === "url") && !app.q("#imageDialog").open);
     assert.equal(app.requests.find(item => item.url === "/api/image/import" && item.body.mode === "url").body.source_url, "https://example.org/image.png");
-    await new Promise(resolve => app.w.requestAnimationFrame(() => resolve()));
+  } finally { app.dom.window.close(); }
+});
+
+test("browser image searches remain available without Cloudflare credentials", async () => {
+  const app = await launch({cloudflareConfigured: false});
+  try {
+    app.q("#manageImage").click();
+    assert.equal(app.q("#imageDialog").open, true);
+    assert.equal(app.q("#generateImage").disabled, true);
+    assert.match(app.q("#generatorInfo").textContent, /CLOUDFLARE_ACCOUNT_ID/);
+    assert.match(app.q("#openGoogleImages").href, /google\.com\/search/);
+    assert.match(app.q("#openBingImages").href, /bing\.com\/images\/search/);
+    assert.match(app.q("#openOpenverse").href, /openverse\.org\/search\/image/);
+    assert.equal(app.requests.filter(item => item.url === "/api/image/generate").length, 0);
   } finally { app.dom.window.close(); }
 });
 

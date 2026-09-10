@@ -2,8 +2,11 @@ import base64
 import json
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+
+from PIL import Image
 
 import app
 
@@ -45,35 +48,46 @@ class HelpersTest(unittest.TestCase):
             b = service.manifest_path("Ce înseamnă?", "Что означает?", "confused person")
             self.assertEqual(a, b)
 
-    def test_openverse_candidate_normalization(self):
-        candidate = app.WebImageService._candidate({
-            "id": "abc",
-            "title": "Confused person",
-            "creator": "Jane",
-            "license": "by",
-            "license_version": "4.0",
-            "thumbnail": "https://example.org/thumb.jpg",
-            "url": "https://example.org/original.jpg",
-            "foreign_landing_url": "https://example.org/page",
-        })
-        self.assertEqual(candidate["id"], "abc")
-        self.assertEqual(candidate["license"], "by")
-        self.assertEqual(candidate["thumbnail"], "https://example.org/thumb.jpg")
+    def test_mnemonic_prompt_uses_meaning_hint_and_forbids_text(self):
+        prompt = app.mnemonic_image_prompt(
+            "Puteți repeta, vă rog?",
+            "Можете повторить, пожалуйста?",
+            "giant parrot pressing a repeat button",
+        )
+        self.assertIn("Можете повторить", prompt)
+        self.assertIn("giant parrot", prompt)
+        self.assertIn("No letters", prompt)
 
-    def test_search_uses_openverse_results(self):
+    def test_cloudflare_payload_image_is_decoded(self):
+        expected = b"\x89PNG\r\n\x1a\n" + b"generated"
+        payload = {"success": True, "result": {"image": base64.b64encode(expected).decode("ascii")}}
+        self.assertEqual(app.WebImageService._extract_cloudflare_image(payload), expected)
+
+    def test_cloudflare_configuration_requires_both_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = app.WebImageService(Path(tmp))
-            fake = {"results": [{
-                "id": "1",
-                "title": "A",
-                "thumbnail": "https://example.org/a.jpg",
-                "url": "https://example.org/a-full.jpg",
-            }]}
-            with patch.object(service, "_request_json", return_value=fake):
-                results, provider = service.search("confused person", 12, "openverse")
-            self.assertEqual(provider, "openverse")
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0]["id"], "1")
+            with patch.object(app, "CLOUDFLARE_ACCOUNT_ID", "account"), \
+                 patch.object(app, "CLOUDFLARE_API_TOKEN", "token"):
+                self.assertTrue(service.cloudflare_configured)
+                self.assertIn("/accounts/account/ai/run/@cf/black-forest-labs/flux-1-schnell", service.cloudflare_endpoint)
+            with patch.object(app, "CLOUDFLARE_API_TOKEN", ""):
+                self.assertFalse(service.cloudflare_configured)
+
+    def test_generated_image_is_resized_and_stored_as_300_square(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.WebImageService(Path(tmp))
+            source = BytesIO()
+            Image.new("RGB", (640, 480), "#7bdca2").save(source, format="PNG")
+            with patch.object(service, "_request_cloudflare_image", return_value=source.getvalue()):
+                selected = service.generate("Nu am înțeles.", "Я не понял.", "confused man and question mark")
+
+            self.assertEqual(selected["source_type"], "cloudflare")
+            self.assertEqual(selected["model"], app.CLOUDFLARE_IMAGE_MODEL)
+            self.assertEqual(selected["query"], "confused man and question mark")
+            target = Path(tmp) / selected["filename"]
+            with Image.open(target) as generated:
+                self.assertEqual(generated.size, (300, 300))
+                self.assertEqual(generated.format, "JPEG")
 
     def test_clipboard_data_url_is_stored_and_found(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -140,38 +154,5 @@ class HelpersTest(unittest.TestCase):
 
             self.assertEqual(old["url"], new["url"])
             self.assertNotEqual(old["version"], new["version"])
-
-
-    def test_google_candidate_normalization(self):
-        candidate = app.WebImageService._google_candidate({
-            "title": "Greeting",
-            "link": "https://example.org/full.jpg",
-            "displayLink": "example.org",
-            "image": {
-                "thumbnailLink": "https://example.org/thumb.jpg",
-                "contextLink": "https://example.org/page",
-            },
-        })
-        self.assertEqual(candidate["provider"], "google")
-        self.assertEqual(candidate["original_url"], "https://example.org/full.jpg")
-        self.assertEqual(candidate["source_url"], "https://example.org/page")
-
-    def test_auto_search_falls_back_to_openverse_without_google_credentials(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            service = app.WebImageService(Path(tmp))
-            fake = {"results": [{
-                "id": "1",
-                "title": "A",
-                "thumbnail": "https://example.org/a.jpg",
-                "url": "https://example.org/a-full.jpg",
-            }]}
-            with patch.object(service, "_request_json", return_value=fake), \
-                 patch.object(app, "GOOGLE_CSE_API_KEY", ""), \
-                 patch.object(app, "GOOGLE_CSE_ID", ""):
-                results, provider = service.search("hello", 5, "auto")
-            self.assertEqual(provider, "openverse")
-            self.assertEqual(len(results), 1)
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -29,8 +29,8 @@
           <div class="picture-frame">
             <img id="currentImage" alt="Ассоциативное изображение" hidden>
             <p id="imagePlaceholder">Добавьте фразы для тренировки.</p>
-            <button id="manageImageQuick" class="button primary image-quick-action" type="button" disabled>
-              Прикрепить изображение
+            <button id="manageImage" class="image-manage-overlay" type="button">
+              <span id="manageImageLabel">Добавить изображение</span>
             </button>
           </div>
           <div class="now-playing">
@@ -58,18 +58,14 @@
         <p id="errorMessage" class="error" role="alert"></p>
 
         <details id="imageOptions" class="image-options">
-          <summary>Изображение текущей фразы</summary>
+          <summary>Управление ассоциациями</summary>
           <p id="imageInfo" class="muted">Проверяю доступные источники…</p>
-          <label for="imageQueryInput">Поисковый запрос</label>
-          <input id="imageQueryInput" class="text-input" type="text" maxlength="300" placeholder="Лучше короткий запрос на английском">
           <div class="toolbar wrap">
-            <button id="saveImageQuery" class="button">Сохранить запрос</button>
-            <button id="manageImage" class="button primary">Найти / добавить / заменить</button>
             <button id="deleteCurrentImage" class="button danger-ghost">Удалить изображение</button>
-            <button id="autoFindMissing" class="button">Автоподобрать недостающие</button>
+            <button id="autoFindMissing" class="button">Сгенерировать недостающие</button>
           </div>
           <div class="batch-progress"><div id="imageProgress"></div></div>
-          <p id="imageStatus" class="image-status" role="status" aria-live="polite"></p>
+          <p id="batchImageStatus" class="image-status" role="status" aria-live="polite"></p>
         </details>
       </div>
 
@@ -86,7 +82,7 @@
     <section id="editorSection" class="panel editor-panel">
       <div class="section-heading">
         <div><p class="step">01</p><h2>Предложения</h2></div>
-        <p>Одна строка: <strong>фраза | перевод | поисковый запрос</strong>. Третий столбец необязателен.</p>
+        <p>Одна строка: <strong>фраза | перевод | идея образа</strong>. Третий столбец необязателен.</p>
       </div>
       <textarea id="phrasesInput" spellcheck="false" aria-label="Предложения для тренировки"></textarea>
       <div class="toolbar wrap">
@@ -124,6 +120,21 @@
       <button id="closeDialog" class="button ghost">Закрыть</button>
     </div>
 
+    <section class="generator-box">
+      <div class="generator-copy">
+        <p class="eyebrow">ГЕНЕРАЦИЯ</p>
+        <h3>Ассоциация через FLUX.1 Schnell</h3>
+        <p id="generatorInfo" class="muted">Проверяю подключение Cloudflare…</p>
+      </div>
+      <label for="imageQueryInput">Идея образа</label>
+      <div class="prompt-row">
+        <input id="imageQueryInput" class="text-input" type="text" maxlength="300" placeholder="Например: giant parrot pressing a repeat button">
+        <button id="saveImageQuery" class="button" type="button">Сохранить</button>
+      </div>
+      <button id="generateImage" class="button primary" type="button">Сгенерировать и прикрепить</button>
+      <p id="imageStatus" class="image-status" role="status" aria-live="polite"></p>
+    </section>
+
     <div class="image-source-grid">
       <section class="source-box">
         <h3>Буфер / перетаскивание</h3>
@@ -142,16 +153,16 @@
       </section>
     </div>
 
-    <section class="search-section">
+    <section class="browser-search-section">
       <div class="dialog-subhead">
-        <div><h3>Найти в сети</h3><p id="dialogQuery" class="muted"></p></div>
-        <div class="toolbar wrap dialog-tools">
-          <select id="imageSearchProvider" aria-label="Источник поиска"><option value="auto">Авто</option><option value="google">Google Images API</option><option value="openverse">Openverse</option></select>
-          <button id="openGoogleImages" class="button">Открыть Google Images</button>
-          <button id="refreshSearch" class="button primary">Искать</button>
+        <div><h3>Или найти фотографию в браузере</h3><p id="dialogQuery" class="muted"></p></div>
+        <div class="toolbar wrap browser-links">
+          <a id="openGoogleImages" class="button" target="_blank" rel="noopener noreferrer">Google Images</a>
+          <a id="openBingImages" class="button" target="_blank" rel="noopener noreferrer">Bing Images</a>
+          <a id="openOpenverse" class="button" target="_blank" rel="noopener noreferrer">Openverse</a>
         </div>
       </div>
-      <div id="candidateGrid" class="candidate-grid"></div>
+      <p class="muted browser-help">Откройте поиск, скопируйте подходящую картинку и вставьте её выше через Ctrl+V либо сохраните файл на компьютер.</p>
     </section>
   </dialog>
 
