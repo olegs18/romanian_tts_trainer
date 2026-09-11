@@ -24,6 +24,7 @@ const elements = {
   manageImageLabel: $('#manageImageLabel'),
   generateImage: $('#generateImage'),
   generatorInfo: $('#generatorInfo'),
+  locale: $('#locale'),
   voice: $('#voice'),
   rate: $('#rate'),
   pitch: $('#pitch'),
@@ -56,6 +57,8 @@ const elements = {
 const state = {
   sentences: [],
   defaults: [],
+  voices: [],
+  voiceByLocale: {},
   currentIndex: -1,
   playing: false,
   paused: false,
@@ -89,7 +92,7 @@ function serializeLines(items) {
 }
 
 function phraseKey(item) {
-  return item ? item.ro.normalize('NFC').trim().toLocaleLowerCase('ro-RO') : '';
+  return item ? item.ro.normalize('NFC').trim().toLocaleLowerCase() : '';
 }
 
 function pluralize(count) {
@@ -146,6 +149,7 @@ function loadSaved() {
 
 function settings() {
   return {
+    locale: elements.locale.value,
     voice: elements.voice.value,
     rate: Number(elements.rate.value),
     pitch: Number(elements.pitch.value),
@@ -173,6 +177,7 @@ function restoreSettings(saved = {}) {
   elements.loop.checked = Boolean(saved.loop);
   elements.hideTranslation.checked = Boolean(saved.hideTranslation);
   elements.recall.checked = Boolean(saved.recall);
+  elements.locale.value = saved.locale || 'ro-RO';
   elements.voice.dataset.savedVoice = saved.voice || '';
 }
 
@@ -289,7 +294,7 @@ function renderPlaylist() {
     main.className = 'sentence-main';
     const phrase = document.createElement('strong');
     phrase.textContent = hideAnswers ? `Карточка ${index + 1}` : item.ro;
-    phrase.lang = hideAnswers ? 'ru' : 'ro';
+    phrase.lang = hideAnswers ? 'ru' : (elements.locale.value || 'ro-RO');
     const translation = document.createElement('span');
     translation.textContent = hideAnswers ? 'Ответ скрыт' : item.ru;
     if (!hideAnswers && elements.hideTranslation.checked) translation.classList.add('translation-hidden');
@@ -346,6 +351,7 @@ function renderCurrent(repeatNumber = null) {
   }
 
   elements.current.textContent = item.ro;
+  elements.current.lang = elements.locale.value || 'ro-RO';
   elements.translation.textContent = item.ru;
   elements.current.hidden = recallHidden;
   elements.translation.hidden = recallHidden;
@@ -786,22 +792,44 @@ async function autoFindMissing() {
   }
 }
 
+const DEFAULT_VOICES = {
+  'ro-RO': 'ro-RO-AlinaNeural',
+  'en-US': 'en-US-JennyNeural',
+  'en-GB': 'en-GB-SoniaNeural',
+};
+
+function voiceLocale(voice) {
+  const name = voice.ShortName || voice.name || '';
+  return voice.Locale || voice.locale || name.slice(0, 5);
+}
+
+function renderVoiceOptions(preferredVoice = '') {
+  const locale = elements.locale.value || 'ro-RO';
+  const voices = state.voices.filter(voice => voiceLocale(voice) === locale);
+  elements.voice.replaceChildren();
+
+  for (const voice of voices) {
+    const name = voice.ShortName || voice.name;
+    const genderValue = voice.Gender || voice.gender || '';
+    const gender = genderValue === 'Female' ? 'женский' : genderValue === 'Male' ? 'мужской' : genderValue;
+    const option = document.createElement('option');
+    option.value = name;
+    option.textContent = `${name}${gender ? ` · ${gender}` : ''}`;
+    elements.voice.append(option);
+  }
+
+  const candidates = [preferredVoice, state.voiceByLocale[locale], DEFAULT_VOICES[locale]];
+  const selected = candidates.find(name => name && [...elements.voice.options].some(option => option.value === name));
+  if (selected) elements.voice.value = selected;
+  if (elements.voice.value) state.voiceByLocale[locale] = elements.voice.value;
+  elements.current.lang = locale;
+}
+
 async function loadVoices() {
   try {
     const data = await api('/api/voices');
-    elements.voice.replaceChildren();
-    for (const voice of data.voices || []) {
-      const name = voice.ShortName || voice.name;
-      const genderValue = voice.Gender || voice.gender || '';
-      const gender = genderValue === 'Female' ? 'женский' : genderValue === 'Male' ? 'мужской' : genderValue;
-      const option = document.createElement('option');
-      option.value = name;
-      option.textContent = `${name}${gender ? ` · ${gender}` : ''}`;
-      elements.voice.append(option);
-    }
-    const saved = elements.voice.dataset.savedVoice;
-    if (saved && [...elements.voice.options].some(option => option.value === saved)) elements.voice.value = saved;
-    else if ([...elements.voice.options].some(option => option.value === 'ro-RO-AlinaNeural')) elements.voice.value = 'ro-RO-AlinaNeural';
+    state.voices = data.voices || [];
+    renderVoiceOptions(elements.voice.dataset.savedVoice);
     elements.badge.textContent = data.warning ? 'TTS РАБОТАЕТ ИЗ РЕЗЕРВА' : 'EDGE TTS ПОДКЛЮЧЁН';
     elements.badge.className = data.warning ? 'badge warning' : 'badge ok';
     if (data.warning) elements.badge.title = data.warning;
@@ -917,11 +945,22 @@ elements.image.addEventListener('error', () => {
 for (const element of [elements.rate, elements.pitch, elements.pause]) {
   element.addEventListener('input', () => { updateRangeOutputs(); persist(); });
 }
-for (const element of [elements.voice, elements.repeats, elements.loop]) element.addEventListener('change', persist);
+elements.locale.addEventListener('change', () => {
+  stopPlayback(false);
+  renderVoiceOptions();
+  renderAll();
+  persist();
+});
+elements.voice.addEventListener('change', () => {
+  state.voiceByLocale[elements.locale.value] = elements.voice.value;
+  persist();
+});
+for (const element of [elements.repeats, elements.loop]) element.addEventListener('change', persist);
 elements.input.addEventListener('input', persist);
 window.addEventListener('beforeunload', persist);
 
-window.RomanianTrainer = {parseLines, serializeLines};
+window.PhraseTrainer = {parseLines, serializeLines};
+window.RomanianTrainer = window.PhraseTrainer;
 initialize().catch(error => {
   elements.badge.textContent = 'ОШИБКА ЗАПУСКА';
   elements.badge.className = 'badge warning';

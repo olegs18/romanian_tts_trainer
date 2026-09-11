@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Romanian TTS Trainer</title>
+  <title>Phrase TTS Trainer</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <main class="shell">
     <header class="hero">
       <div>
-        <p class="eyebrow">ROMÂNĂ · СЛУШАЙ · ПРЕДСТАВЛЯЙ · ВСПОМИНАЙ</p>
-        <h1>Тренажёр румынских фраз</h1>
+        <p class="eyebrow">СЛУШАЙ · ПРЕДСТАВЛЯЙ · ПОВТОРЯЙ · ВСПОМИНАЙ</p>
+        <h1>Тренажёр иностранных фраз</h1>
         <p class="lead">Одна фраза, один образ, один фокус внимания. Во время прогона меняется карточка, а не положение страницы.</p>
       </div>
       <div id="connectionBadge" class="badge loading">Проверяю TTS…</div>
@@ -82,13 +82,13 @@
     <section id="editorSection" class="panel editor-panel">
       <div class="section-heading">
         <div><p class="step">01</p><h2>Предложения</h2></div>
-        <p>Одна строка: <strong>фраза | перевод | идея образа</strong>. Третий столбец необязателен.</p>
+        <p>Одна строка: <strong>изучаемая фраза | перевод | идея образа</strong>. Третий столбец необязателен.</p>
       </div>
       <textarea id="phrasesInput" spellcheck="false" aria-label="Предложения для тренировки"></textarea>
       <div class="toolbar wrap">
         <button id="applyPhrases" class="button primary">Обновить список</button>
         <button id="pastePhrases" class="button">Вставить из буфера</button>
-        <button id="loadDefaults" class="button">Вернуть базовый набор</button>
+        <button id="loadDefaults" class="button">Вернуть румынский набор</button>
         <button id="clearPhrases" class="button danger-ghost">Очистить</button>
       </div>
     </section>
@@ -96,7 +96,14 @@
     <section class="settings-grid">
       <div class="panel settings-panel">
         <div class="section-heading compact"><div><p class="step">02</p><h2>Озвучка</h2></div></div>
-        <label><span>Румынский голос</span><select id="voice"></select></label>
+        <label><span>Язык и вариант произношения</span>
+          <select id="locale">
+            <option value="ro-RO">Румынский (Румыния)</option>
+            <option value="en-US">Английский (США)</option>
+            <option value="en-GB">Английский (Великобритания)</option>
+          </select>
+        </label>
+        <label><span>Голос</span><select id="voice"></select></label>
         <label><span>Скорость <output id="rateValue">-15%</output></span><input id="rate" type="range" min="-50" max="60" step="5" value="-15"></label>
         <label><span>Высота голоса <output id="pitchValue">+0 Гц</output></span><input id="pitch" type="range" min="-50" max="50" step="5" value="0"></label>
       </div>

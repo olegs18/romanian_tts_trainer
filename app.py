@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Romanian TTS Trainer: local browser app with Edge TTS and flexible image sources."""
+"""Phrase TTS Trainer: local browser app with Edge TTS and mnemonic images."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ STATIC_DIR = ROOT / "static"
 CACHE_DIR = ROOT / "cache"
 AUDIO_CACHE_DIR = CACHE_DIR / "audio"
 IMAGE_CACHE_DIR = CACHE_DIR / "images"
-VOICE_CACHE_FILE = CACHE_DIR / "voices-ro-RO.json"
+VOICE_CACHE_FILE = CACHE_DIR / "voices-learning.json"
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
@@ -62,7 +62,13 @@ CLOUDFLARE_IMAGE_STEPS = 4
 CLOUDFLARE_RESPONSE_LIMIT = 24 * 1024 * 1024
 GENERATED_IMAGE_SIZE = 300
 CLOUDFLARE_MODEL_URL = "https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/"
-USER_AGENT = "RomanianTTSTrainer/2.1 (local language-learning app)"
+USER_AGENT = "PhraseTTSTrainer/2.2 (local language-learning app)"
+
+SUPPORTED_LOCALES = {
+    "ro-RO": "Румынский (Румыния)",
+    "en-US": "Английский (США)",
+    "en-GB": "Английский (Великобритания)",
+}
 
 DEFAULT_PHRASES = [
     ["Bună ziua.", "Добрый день.", "people greeting hello daytime"],
@@ -84,6 +90,10 @@ DEFAULT_PHRASES = [
 FALLBACK_VOICES = [
     {"ShortName": "ro-RO-AlinaNeural", "Gender": "Female", "Locale": "ro-RO"},
     {"ShortName": "ro-RO-EmilNeural", "Gender": "Male", "Locale": "ro-RO"},
+    {"ShortName": "en-US-JennyNeural", "Gender": "Female", "Locale": "en-US"},
+    {"ShortName": "en-US-GuyNeural", "Gender": "Male", "Locale": "en-US"},
+    {"ShortName": "en-GB-SoniaNeural", "Gender": "Female", "Locale": "en-GB"},
+    {"ShortName": "en-GB-RyanNeural", "Gender": "Male", "Locale": "en-GB"},
 ]
 
 ALLOWED_IMAGE_TYPES = {
@@ -138,7 +148,7 @@ def mnemonic_image_prompt(text: str, translation: str, visual_hint: str) -> str:
     meaning = clean_text(translation, 700) or clean_text(text, 500)
     hint = default_image_query(text, translation, visual_hint)
     return (
-        "Create a vivid surreal mnemonic photograph for memorizing a Romanian expression. "
+        "Create a vivid surreal mnemonic photograph for memorizing a foreign-language expression. "
         f"Meaning of the expression: {meaning}. Visual association: {hint}. "
         "Show one instantly understandable scene with one dominant action, exaggerated scale, "
         "strong emotion and a memorable unexpected object. The association matters more than "
@@ -203,7 +213,7 @@ class VoiceService:
         except ImportError as exc:
             raise RuntimeError("Не установлен edge-tts") from exc
         voices = await edge_tts.list_voices()
-        return [voice for voice in voices if voice.get("Locale") == "ro-RO"]
+        return [voice for voice in voices if voice.get("Locale") in SUPPORTED_LOCALES]
 
     def get_voices(self) -> tuple[list[dict[str, str]], str | None]:
         error: str | None = None
@@ -219,7 +229,8 @@ class VoiceService:
                     for v in voices
                     if v.get("ShortName")
                 ]
-                compact.sort(key=lambda item: item["ShortName"])
+                locale_order = {locale: index for index, locale in enumerate(SUPPORTED_LOCALES)}
+                compact.sort(key=lambda item: (locale_order.get(item["Locale"], 999), item["ShortName"]))
                 self.cache_file.write_text(json.dumps(compact, ensure_ascii=False, indent=2), encoding="utf-8")
                 return compact, None
         except Exception as exc:
@@ -236,7 +247,7 @@ class VoiceService:
 
 
 class WebImageService:
-    """Generate or import one active image per Romanian phrase."""
+    """Generate or import one active image per study phrase."""
 
     def __init__(self, cache_dir: Path = IMAGE_CACHE_DIR):
         self.cache_dir = cache_dir
@@ -659,7 +670,7 @@ IMAGE_SERVICE = WebImageService()
 
 
 class TrainerHandler(BaseHTTPRequestHandler):
-    server_version = "RomanianTTSTrainer/2.1"
+    server_version = "PhraseTTSTrainer/2.2"
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {format % args}")
@@ -735,7 +746,15 @@ class TrainerHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/voices":
             voices, warning = VOICE_SERVICE.get_voices()
-            self._json({"ok": True, "voices": voices, "warning": warning})
+            self._json({
+                "ok": True,
+                "voices": voices,
+                "locales": [
+                    {"code": code, "label": label}
+                    for code, label in SUPPORTED_LOCALES.items()
+                ],
+                "warning": warning,
+            })
             return
         if path.startswith("/static/"):
             self._serve_file(STATIC_DIR / path.removeprefix("/static/"))
@@ -832,7 +851,7 @@ class TrainerHandler(BaseHTTPRequestHandler):
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Local Romanian TTS trainer")
+    parser = argparse.ArgumentParser(description="Local phrase TTS trainer")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--no-browser", action="store_true", help="do not open the browser automatically")
     return parser.parse_args()
@@ -845,7 +864,7 @@ def main() -> None:
 
     server = ThreadingHTTPServer((HOST, args.port), TrainerHandler)
     url = f"http://{HOST}:{args.port}"
-    print(f"Romanian TTS Trainer: {url}")
+    print(f"Phrase TTS Trainer: {url}")
     print("Остановка: Ctrl+C")
     if not args.no_browser:
         threading.Timer(0.4, lambda: webbrowser.open(url)).start()

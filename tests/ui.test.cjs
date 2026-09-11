@@ -60,7 +60,14 @@ async function launch({saved = null, cloudflareConfigured = true} = {}) {
     const body = options.body ? JSON.parse(options.body) : null;
     requests.push({url, body});
     if (url === "/api/status") return response({ok: true, defaults, image: {max_bytes: 12 * 1024 * 1024, cloudflare: {configured: cloudflareConfigured, model: "@cf/black-forest-labs/flux-1-schnell", output_size: 300}}});
-    if (url === "/api/voices") return response({ok: true, warning: null, voices: [{ShortName: "ro-RO-AlinaNeural", Gender: "Female"}]});
+    if (url === "/api/voices") return response({ok: true, warning: null, voices: [
+      {ShortName: "ro-RO-AlinaNeural", Gender: "Female", Locale: "ro-RO"},
+      {ShortName: "ro-RO-EmilNeural", Gender: "Male", Locale: "ro-RO"},
+      {ShortName: "en-US-JennyNeural", Gender: "Female", Locale: "en-US"},
+      {ShortName: "en-US-GuyNeural", Gender: "Male", Locale: "en-US"},
+      {ShortName: "en-GB-SoniaNeural", Gender: "Female", Locale: "en-GB"},
+      {ShortName: "en-GB-RyanNeural", Gender: "Male", Locale: "en-GB"},
+    ]});
     if (url === "/api/image/lookup") {
       return response({ok: true, found: body.text === defaults[0][0], query: body.query, image: body.text === defaults[0][0] ? cachedImage : null});
     }
@@ -76,10 +83,11 @@ async function launch({saved = null, cloudflareConfigured = true} = {}) {
   return {dom, w, q, requests, played};
 }
 
-test("lesson parser keeps Romanian, translation and image query separate", async () => {
+test("lesson parser keeps phrase, translation and image query separate", async () => {
   const app = await launch();
   try {
-    const parsed = JSON.parse(JSON.stringify(app.w.RomanianTrainer.parseLines("Salut | Привет | waving hand\nBună\tДобрый день\tstreet greeting")));
+    assert.equal(app.w.RomanianTrainer, app.w.PhraseTrainer);
+    const parsed = JSON.parse(JSON.stringify(app.w.PhraseTrainer.parseLines("Salut | Привет | waving hand\nBună\tДобрый день\tstreet greeting")));
     assert.deepEqual(parsed, [
       {ro: "Salut", ru: "Привет", query: "waving hand"},
       {ro: "Bună", ru: "Добрый день", query: "street greeting"},
@@ -98,6 +106,35 @@ test("interface has one large study card and a compact playlist", async () => {
     assert.equal(app.q("#imagePlaceholder").hidden, true);
     assert.equal(app.q("#manageImageLabel").textContent, "Заменить изображение");
     assert.match(fs.readFileSync(path.join(root, "static/style.css"), "utf8"), /\.image-manage-overlay[^}]*opacity:\s*0/);
+  } finally { app.dom.window.close(); }
+});
+
+test("language selector filters voices and remembers the English choice", async () => {
+  const app = await launch();
+  try {
+    const optionValues = () => [...app.q("#voice").options].map(option => option.value);
+    assert.equal(app.q("#locale").value, "ro-RO");
+    assert.deepEqual(optionValues(), ["ro-RO-AlinaNeural", "ro-RO-EmilNeural"]);
+
+    app.q("#locale").value = "en-US";
+    app.q("#locale").dispatchEvent(new app.w.Event("change"));
+    assert.deepEqual(optionValues(), ["en-US-JennyNeural", "en-US-GuyNeural"]);
+    assert.equal(app.q("#voice").value, "en-US-JennyNeural");
+    assert.equal(app.q("#currentSentence").lang, "en-US");
+
+    app.q("#voice").value = "en-US-GuyNeural";
+    app.q("#voice").dispatchEvent(new app.w.Event("change"));
+    app.q("#locale").value = "en-GB";
+    app.q("#locale").dispatchEvent(new app.w.Event("change"));
+    assert.deepEqual(optionValues(), ["en-GB-SoniaNeural", "en-GB-RyanNeural"]);
+    assert.equal(app.q("#voice").value, "en-GB-SoniaNeural");
+
+    app.q("#locale").value = "en-US";
+    app.q("#locale").dispatchEvent(new app.w.Event("change"));
+    assert.equal(app.q("#voice").value, "en-US-GuyNeural");
+    const saved = JSON.parse(app.w.localStorage.getItem("romanian-tts-trainer-v5"));
+    assert.equal(saved.settings.locale, "en-US");
+    assert.equal(saved.settings.voice, "en-US-GuyNeural");
   } finally { app.dom.window.close(); }
 });
 

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from PIL import Image
 
@@ -12,6 +12,32 @@ import app
 
 
 class HelpersTest(unittest.TestCase):
+    def test_fallback_voices_cover_romanian_and_english_locales(self):
+        self.assertEqual(
+            {voice["Locale"] for voice in app.FALLBACK_VOICES},
+            {"ro-RO", "en-US", "en-GB"},
+        )
+        names = {voice["ShortName"] for voice in app.FALLBACK_VOICES}
+        self.assertTrue({
+            "ro-RO-AlinaNeural",
+            "en-US-JennyNeural",
+            "en-GB-SoniaNeural",
+        }.issubset(names))
+
+    def test_voice_service_keeps_supported_locales_in_selector_order(self):
+        voices = [
+            {"ShortName": "en-GB-RyanNeural", "Gender": "Male", "Locale": "en-GB"},
+            {"ShortName": "en-US-GuyNeural", "Gender": "Male", "Locale": "en-US"},
+            {"ShortName": "ro-RO-EmilNeural", "Gender": "Male", "Locale": "ro-RO"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            service = app.VoiceService(Path(tmp) / "voices.json")
+            with patch.object(service, "_fetch", new=AsyncMock(return_value=voices)):
+                selected, warning = service.get_voices()
+
+        self.assertIsNone(warning)
+        self.assertEqual([voice["Locale"] for voice in selected], ["ro-RO", "en-US", "en-GB"])
+
     def test_stable_hash_is_stable_and_sensitive(self):
         self.assertEqual(app.stable_hash("a", "b"), app.stable_hash("a", "b"))
         self.assertNotEqual(app.stable_hash("a", "b"), app.stable_hash("ab"))
